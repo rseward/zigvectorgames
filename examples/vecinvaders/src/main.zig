@@ -246,7 +246,9 @@ pub fn main() !void {
             // ── Step-based alien movement ──
             // Speed is inversely proportional to alive count.
             // Full squadron: slow. Single alien: very fast.
-            step_interval = @as(f32, @floatFromInt(alive_count)) * 0.04 + 0.15;
+            // Each wave is faster than the last to keep escalating difficulty.
+            const wave_multiplier: f32 = 1.0 / (1.0 + @as(f32, @floatFromInt(wave - 1)) * 0.15);
+            step_interval = (@as(f32, @floatFromInt(alive_count)) * 0.04 + 0.15) * wave_multiplier;
             step_timer += dt;
             if (step_timer >= step_interval) {
                 step_timer = 0;
