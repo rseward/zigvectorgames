@@ -1,5 +1,5 @@
 ZIG    ?= zig
-GAMES   = minimal vecpong veclander vecinvaders vectetris
+GAMES   = minimal vecpong veclander vecinvaders vectetris vecblackhole
 
 # Build the vgame platform library.
 build:
@@ -45,6 +45,9 @@ run-vecinvaders:
 run-vectetris:
 	cd examples/vectetris && $(ZIG) build run
 
+run-vecblackhole:
+	cd examples/vecblackhole && $(ZIG) build run
+
 # Install system dependencies for raylib (Fedora).
 deps:
 	sudo dnf install -y \
@@ -89,7 +92,7 @@ help:
 	@echo ""
 	@echo "Build targets:"
 	@echo "  make build                  Build the vgame platform library"
-	@echo "  make build-samples           Build all 5 sample games"
+	@echo "  make build-samples           Build all 6 sample games"
 	@echo "  make build-samples-release   Build all samples with --release=fast"
 	@echo "  make build-sample GAME=<name> Build one game"
 	@echo "  make build-bazzite           Cross-compile for Bazzite glibc 2.42"
@@ -102,6 +105,7 @@ help:
 	@echo "  make run-veclander           Build and run VecLander"
 	@echo "  make run-vecinvaders         Build and run VecInvaders"
 	@echo "  make run-vectetris           Build and run VecTetris"
+	@echo "  make run-vecblackhole        Build and run VecBlackhole"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  make list-samples            List available sample games"
@@ -125,5 +129,5 @@ clean:
 	done
 
 .PHONY: build build-samples build-samples-release build-sample run-sample \
-         run-minimal run-vecpong run-veclander run-vecinvaders run-vectetris \
+         run-minimal run-vecpong run-veclander run-vecinvaders run-vectetris run-vecblackhole \
          deps build-bazzite build-pi clean list-samples help

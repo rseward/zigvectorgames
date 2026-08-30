@@ -16,7 +16,7 @@
 //   - Accretion disk glow: material spiraling in heats up and emits
 //     progressively hotter radiation (IR -> red -> orange -> white -> blue)
 //
-// Controls: R = reset, P = pause, ESC = quit
+// Controls: R = reset, P = pause, + = speed up, - = slow down, ESC = quit
 
 const std = @import("std");
 const vgame = @import("vgame");
@@ -28,7 +28,7 @@ const Vector2 = vgame.Vector2;
 const DESIGN_W: f32 = 1280.0;
 const DESIGN_H: f32 = 960.0;
 
-const NUM_STARS: usize = 80;
+const NUM_STARS: usize = 24;
 
 // Black hole parameters (in design-space pixels)
 const BH_MASS: f32 = 8000.0;        // gravitational mass parameter
@@ -41,7 +41,9 @@ const BH_GLOW: f32 = 140.0;         // accretion disk outer glow radius
 const G: f32 = 0.8;            // gravitational constant (tuned for visual effect)
 const SPEED_OF_LIGHT: f32 = 600.0; // c in design-space units (for redshift calc)
 const MAX_VEL: f32 = 500.0;    // velocity cap to prevent numerical explosion
-const TIME_SCALE: f32 = 1.0;   // simulation speed multiplier
+const TIME_SCALE_MIN: f32 = 0.1;
+const TIME_SCALE_MAX: f32 = 5.0;
+const TIME_SCALE_STEP: f32 = 0.2;
 
 // Star visual parameters
 const STAR_MIN_RADIUS: f32 = 1.5;
@@ -106,6 +108,7 @@ const Simulation = struct {
     paused: bool = false,
     reset_timer: f32 = 0,
     resetting: bool = false,
+    time_scale: f32 = 1.0,
 
     fn init(self: *Simulation, prng: *std.Random.DefaultPrng) void {
         self.bh_x = DESIGN_W / 2;
@@ -171,7 +174,7 @@ const Simulation = struct {
         }
 
         self.time += dt;
-        const sim_dt = dt * TIME_SCALE;
+        const sim_dt = dt * self.time_scale;
 
         for (0..NUM_STARS) |i| {
             if (!self.stars[i].alive) continue;
@@ -386,6 +389,12 @@ pub fn main() !void {
             var new_prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
             sim.init(&new_prng);
         }
+        if (rl.isKeyPressed(.equal) or rl.isKeyPressed(.kp_add)) {
+            sim.time_scale = @min(TIME_SCALE_MAX, sim.time_scale + TIME_SCALE_STEP);
+        }
+        if (rl.isKeyPressed(.minus) or rl.isKeyPressed(.kp_subtract)) {
+            sim.time_scale = @max(TIME_SCALE_MIN, sim.time_scale - TIME_SCALE_STEP);
+        }
 
         sim.update(dt);
 
@@ -433,6 +442,13 @@ pub fn main() !void {
             20, 20, 24, .{ .r = 150, .g = 150, .b = 180, .a = 200 });
         ctx.drawText("Stars:", 20, 55, 20, .{ .r = 120, .g = 120, .b = 140, .a = 200 });
         ctx.drawNumber(sim.num_alive, .{ .x = 120, .y = 55 });
+
+        var speed_buf: [32:0]u8 = undefined;
+        const speed_str = std.fmt.bufPrintZ(&speed_buf, "Speed: {d:.1}x", .{sim.time_scale}) catch unreachable;
+        ctx.drawText(speed_str, 20, 80, 20, .{ .r = 120, .g = 120, .b = 140, .a = 200 });
+
+        ctx.drawText("+/- to adjust  P pause  R reset",
+            20, 105, 18, .{ .r = 90, .g = 90, .b = 110, .a = 180 });
 
         if (sim.paused) {
             vgame.drawOverlay(fs, .{
