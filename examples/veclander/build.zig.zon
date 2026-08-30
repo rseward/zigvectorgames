@@ -1,0 +1,11 @@
+.{
+    .name = .veclander,
+    .version = "0.1.0",
+    .fingerprint = 0xae27abb4dda40812,
+    .dependencies = .{
+        .vgame = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}

@@ -1,0 +1,11 @@
+.{
+    .name = .vecpong,
+    .version = "0.1.0",
+    .fingerprint = 0x9463374873955701,
+    .dependencies = .{
+        .vgame = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}

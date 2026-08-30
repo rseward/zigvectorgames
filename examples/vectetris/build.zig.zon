@@ -1,0 +1,11 @@
+.{
+    .name = .vectetris,
+    .version = "0.1.0",
+    .fingerprint = 0x489f9a219156ef39,
+    .dependencies = .{
+        .vgame = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}

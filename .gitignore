@@ -1,0 +1,21 @@
+# Zig build outputs
+zig-out/
+.zig-cache/
+
+# Flatpak build artifacts
+flatpak-build/
+flatpak-repo/
+
+# Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+Thumbs.db

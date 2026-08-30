@@ -1,0 +1,11 @@
+.{
+    .name = .vgame_minimal,
+    .version = "0.1.0",
+    .fingerprint = 0xbb45ae1105b4d84b,
+    .dependencies = .{
+        .vgame = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}
