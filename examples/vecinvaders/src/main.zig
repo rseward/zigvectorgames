@@ -319,7 +319,8 @@ pub fn main() !void {
 
                 if (!b.remove) {
                     if (b.from_player) {
-                        const alien_radius = alien_spacing * 0.35;
+                        // Tight hit box — player must aim near the invader's center
+                        const alien_radius = alien_spacing * 0.2;
                         for (aliens.items) |*a| {
                             if (a.alive and vgame.circleCollision(b.pos, 5, a.pos, alien_radius)) {
                                 a.alive = false;
@@ -333,8 +334,8 @@ pub fn main() !void {
                             }
                         }
                     } else {
-                        // Player collision radius matches alien size
-                        const player_radius = alien_spacing * 0.35;
+                        // Tight hit box on player too — matches alien hit difficulty
+                        const player_radius = alien_spacing * 0.2;
                         if (vgame.circleCollision(b.pos, 5, player.pos, player_radius)) {
                             b.remove = true;
                             player.lives -= 1;
