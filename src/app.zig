@@ -80,8 +80,31 @@ pub const App = struct {
 
     /// Called at the top of the frame loop. Returns false when the window
     /// should close. Updates delta time, screen size, and frame counter.
+    /// Automatically handles the "F" key to toggle fullscreen — this is a
+    /// platform-level binding that works in every game without the game
+    /// needing to define a fullscreen action in its Action enum.
     pub fn frame(self: *App) bool {
         if (rl.windowShouldClose()) return false;
+
+        // Platform-level fullscreen toggle (always available, regardless of
+        // game state). The per-frame screen.changed() check below catches the
+        // new dimensions one or two frames after the compositor applies the
+        // mode change.
+        if (rl.isKeyPressed(.f)) {
+            if (rl.isWindowFullscreen()) {
+                // Returning to windowed: maximise so the window fills the desktop.
+                rl.toggleFullscreen();
+                rl.maximizeWindow();
+                const mon = rl.getCurrentMonitor();
+                const mw = rl.getMonitorWidth(mon);
+                const mh = rl.getMonitorHeight(mon);
+                if (mw > 0 and mh > 0) {
+                    rl.setWindowSize(mw, mh);
+                }
+            } else {
+                rl.toggleFullscreen();
+            }
+        }
 
         self.delta = rl.getFrameTime();
         self.time += self.delta;
