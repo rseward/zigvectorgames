@@ -249,7 +249,7 @@ pub fn main() !void {
             // Full squadron: slow. Single alien: extremely fast.
             // Each wave is 25% faster than the last to keep escalating difficulty.
             const wave_multiplier: f32 = 1.0 / (1.0 + @as(f32, @floatFromInt(wave - 1)) * 0.25);
-            step_interval = (@as(f32, @floatFromInt(alive_count)) * 0.093 + 0.115) * wave_multiplier;
+            step_interval = (@as(f32, @floatFromInt(alive_count)) * 0.0465 + 0.0575) * wave_multiplier;
             step_timer += dt;
             if (step_timer >= step_interval) {
                 step_timer = 0;
