@@ -1,0 +1,11 @@
+.{
+    .name = .vecblackhole,
+    .version = "0.1.0",
+    .fingerprint = 0x5aeae5d015174268,
+    .dependencies = .{
+        .vgame = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}
