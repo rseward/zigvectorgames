@@ -4,14 +4,15 @@
 // Press 2 at the title screen for two-player mode (keyboard or two gamepads).
 //
 // Player 1 controls:
-//   Keyboard: W/S
+//   Keyboard: Up/Down arrows
 //   Gamepad 0: Left stick Y / D-pad up-down
 //
 // Player 2 controls (two-player mode only):
-//   Keyboard: Up/Down arrows
+//   Keyboard: W/S
 //   Gamepad 1: Left stick Y / D-pad up-down
 //
 // F toggles fullscreen (platform default).
+// P pauses and shows the help screen.
 // R restarts after a game ends. 1/2 selects mode at title screen.
 
 const std = @import("std");
@@ -42,7 +43,7 @@ const AI_DEADZONE: f32 = 30.0; // don't chase tiny misalignments
 
 const Mode = enum { title, vs_computer, two_player };
 
-const GameMode = enum { title, playing, game_over };
+const GameMode = enum { title, playing, paused, game_over };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -99,9 +100,9 @@ pub fn main() !void {
                 serve_delay -= dt;
             }
 
-            // ── Player 1 input (keyboard + gamepad 0) ──
-            if (rl.isKeyDown(.w)) p1.pos.y -= p1.speed * dt;
-            if (rl.isKeyDown(.s)) p1.pos.y += p1.speed * dt;
+            // ── Player 1 input (keyboard: Up/Down + gamepad 0) ──
+            if (rl.isKeyDown(.up)) p1.pos.y -= p1.speed * dt;
+            if (rl.isKeyDown(.down)) p1.pos.y += p1.speed * dt;
             // Gamepad 0: left stick Y (inverted) + d-pad
             if (rl.isGamepadAvailable(0)) {
                 const ly = rl.getGamepadAxisMovement(0, .left_y);
@@ -113,9 +114,9 @@ pub fn main() !void {
 
             // ── Player 2 input ──
             if (mode == .two_player) {
-                // Keyboard: Up/Down arrows
-                if (rl.isKeyDown(.up)) p2.pos.y -= p2.speed * dt;
-                if (rl.isKeyDown(.down)) p2.pos.y += p2.speed * dt;
+                // Keyboard: W/S
+                if (rl.isKeyDown(.w)) p2.pos.y -= p2.speed * dt;
+                if (rl.isKeyDown(.s)) p2.pos.y += p2.speed * dt;
                 // Gamepad 1: left stick Y + d-pad
                 if (rl.isGamepadAvailable(1)) {
                     const ly2 = rl.getGamepadAxisMovement(1, .left_y);
@@ -223,6 +224,12 @@ pub fn main() !void {
                 game_state = .game_over;
                 winner = if (mode == .vs_computer) "COMPUTER WINS!" else "PLAYER 2 WINS!";
             }
+
+            // Pause toggle
+            if (rl.isKeyPressed(.p)) game_state = .paused;
+        } else if (game_state == .paused) {
+            // P or Space resumes
+            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) game_state = .playing;
         } else if (game_state == .game_over) {
             if (rl.isKeyPressed(.r)) {
                 game_state = .playing;
@@ -269,8 +276,8 @@ pub fn main() !void {
             .height = p2.height,
         }, vgame.Color.ray_white);
 
-        // Ball (hidden during serve delay)
-        if (serve_delay <= 0 or game_state != .playing) {
+        // Ball (hidden during serve delay or pause)
+        if (serve_delay <= 0 and game_state == .playing) {
             ctx.drawCircle(ball.pos, ball.radius, vgame.Color.white);
         }
 
@@ -312,8 +319,26 @@ pub fn main() !void {
                     "Press 1 for Player vs Computer",
                     "Press 2 for Two Players",
                     "",
-                    "Player 1: W/S or Gamepad 0",
-                    "Player 2: Up/Down or Gamepad 1",
+                    "Player 1: Up/Down or Gamepad 0",
+                    "Player 2: W/S or Gamepad 1",
+                    "",
+                    "P = Pause   F = Fullscreen",
+                },
+                .bg_color = .{ .r = 16, .g = 60, .b = 140, .a = 200 },
+            });
+        }
+
+        // Pause overlay (same help info as title screen)
+        if (game_state == .paused) {
+            vgame.drawOverlay(fs, .{
+                .title = "PAUSED",
+                .title_color = vgame.Color.white,
+                .lines = &.{
+                    "",
+                    "Press P or Space to resume",
+                    "",
+                    "Player 1: Up/Down or Gamepad 0",
+                    "Player 2: W/S or Gamepad 1",
                     "",
                     "F = Fullscreen",
                 },
