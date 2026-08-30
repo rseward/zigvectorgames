@@ -18,6 +18,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Screen = @import("screen.zig").Screen;
 const RenderContext = @import("render.zig").RenderContext;
+const render = @import("render.zig");
 const AudioManager = @import("audio.zig").AudioManager;
 const AudioConfig = @import("audio.zig").AudioConfig;
 const AppConfig = @import("config.zig").AppConfig;
@@ -118,7 +119,10 @@ pub const App = struct {
     }
 
     /// Begin rendering. Returns a RenderContext for drawing in design-space.
-    /// The context sets up a Camera2D for letterbox centering.
+    /// The context sets up a Camera2D with zoom = render_scale so that all
+    /// drawing in design-space coordinates is automatically scaled to fit
+    /// the actual window. Games never need to think about screen resolution —
+    /// they always work in the fixed design_size coordinate system.
     /// Call `ctx.end()` (via defer) to finish drawing.
     pub fn beginRender(self: *App) RenderContext {
         rl.beginDrawing();
@@ -128,9 +132,12 @@ pub const App = struct {
             .offset = self.screen.offset,
             .target = .{ .x = 0, .y = 0 },
             .rotation = 0,
-            .zoom = 1,
+            .zoom = self.screen.render_scale,
         };
         camera.begin();
+
+        // Set the render scale so drawLinesRaw can scale line thickness.
+        render.setRenderScale(self.screen.render_scale);
 
         return .{
             .screen = &self.screen,

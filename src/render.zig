@@ -20,6 +20,14 @@ const text = @import("text.zig");
 
 pub const DEFAULT_THICKNESS: f32 = 2.5;
 
+/// Current render_scale for thickness scaling. Set by App.beginRender()
+/// each frame so drawLinesRaw can scale line thickness proportionally.
+var current_render_scale: f32 = 1.0;
+
+pub fn setRenderScale(s: f32) void {
+    current_render_scale = s;
+}
+
 pub const RenderContext = struct {
     screen: *Screen,
     camera: rl.Camera2D,
@@ -105,6 +113,35 @@ pub const RenderContext = struct {
         _ = self;
         rl.drawLineEx(a, b, thickness, color);
     }
+
+    // ── Design-space percentage helpers ───────────────────────────
+    // Games can express positions and sizes as percentages of the design
+    // resolution (0.0–1.0). These convert to design-space pixels.
+    // e.g. ctx.pct(0.5, 0.25) returns the point at 50% width, 25% height.
+
+    /// Convert a percentage position (0.0–1.0) to design-space pixels.
+    pub fn pct(self: *const RenderContext, px: f32, py: f32) Vector2 {
+        return .{
+            .x = px * self.screen.design_size.x,
+            .y = py * self.screen.design_size.y,
+        };
+    }
+
+    /// Convert a percentage of the field width to design-space pixels.
+    pub fn pctW(self: *const RenderContext, pw: f32) f32 {
+        return pw * self.screen.design_size.x;
+    }
+
+    /// Convert a percentage of the field height to design-space pixels.
+    pub fn pctH(self: *const RenderContext, ph: f32) f32 {
+        return ph * self.screen.design_size.y;
+    }
+
+    /// Scale a size value relative to the field (uses the smaller dimension
+    /// so it stays proportional on any aspect ratio).
+    pub fn pctS(self: *const RenderContext, ps: f32) f32 {
+        return ps * @min(self.screen.design_size.x, self.screen.design_size.y);
+    }
 };
 
 /// Raw drawLines without RenderContext — used as callback for text.drawNumber.
@@ -121,8 +158,9 @@ pub fn drawLinesRaw(org: Vector2, scale: f32, rot: f32, points: []const Vector2,
         }
     };
     const t = Transformer{ .org = org, .scale = scale, .rot = rot };
+    const thickness = DEFAULT_THICKNESS * current_render_scale;
     const bound = if (connect) points.len else (points.len - 1);
     for (0..bound) |i| {
-        rl.drawLineEx(t.apply(points[i]), t.apply(points[(i + 1) % points.len]), DEFAULT_THICKNESS, color);
+        rl.drawLineEx(t.apply(points[i]), t.apply(points[(i + 1) % points.len]), thickness, color);
     }
 }
