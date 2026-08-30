@@ -244,12 +244,12 @@ pub fn main() !void {
             }
 
             // ── Step-based alien movement ──
-            // Speed is inversely proportional to alive count.
-            // Full squadron: slow. Single alien: very fast.
-            // Each wave is 25% faster than the last. Baseline is 23% faster
-            // than the original tuning (0.04 -> 0.031 coefficient).
+            // Speed is inversely proportional to alive count — tripled so
+            // the squadron accelerates aggressively as invaders are killed.
+            // Full squadron: slow. Single alien: extremely fast.
+            // Each wave is 25% faster than the last to keep escalating difficulty.
             const wave_multiplier: f32 = 1.0 / (1.0 + @as(f32, @floatFromInt(wave - 1)) * 0.25);
-            step_interval = (@as(f32, @floatFromInt(alive_count)) * 0.031 + 0.115) * wave_multiplier;
+            step_interval = (@as(f32, @floatFromInt(alive_count)) * 0.093 + 0.115) * wave_multiplier;
             step_timer += dt;
             if (step_timer >= step_interval) {
                 step_timer = 0;
@@ -381,7 +381,7 @@ pub fn main() !void {
                 const s = try spawnAliens(&aliens, allocator, fs.x);
                 alien_spacing = s.spacing;
                 alive_count = TOTAL_ALIENS;
-                spawnBunkers(&bunkers, fs.x, fs.y);
+                // Bunkers are NOT reset — damage persists across waves
             }
 
             particles.update(dt, fs);
@@ -445,11 +445,11 @@ pub fn main() !void {
         const wave_w = rl.measureText(wave_str, 20);
         ctx.drawText(wave_str, @as(i32, @intFromFloat(fs.x / 2)) - @divTrunc(wave_w, 2), 30, 20, vgame.Color.white);
 
-        // Lives (drawn with the upward-pointing shape, same scale ratio as before)
+        // Lives (drawn at top of screen, twice as big as before)
         for (0..player.lives) |li| {
             ctx.drawLines(
-                .{ .x = 50 + @as(f32, @floatFromInt(li)) * 45, .y = 60 },
-                app.screen.scale * 0.3,
+                .{ .x = 50 + @as(f32, @floatFromInt(li)) * 60, .y = 60 },
+                app.screen.scale * 0.6,
                 0,
                 &PLAYER_SHAPE,
                 true,
