@@ -69,18 +69,22 @@ const Game = struct {
     paused: bool = false,
 
     fn init(rand: *std.Random) Game {
+        const t: PieceType = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
         var g = Game{
             .grid = @splat(@splat(null)),
-            .piece = .{ .type = .T, .row = 0, .col = 3 },
-            .next = .T,
+            .piece = .{ .type = t, .row = 0, .col = 3 },
+            .next = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT)),
         };
-        g.spawnNew(rand);
+        if (!g.isValidPos(g.piece)) {
+            g.game_over = true;
+        }
         return g;
     }
 
     fn spawnNew(self: *Game, rand: *std.Random) void {
-        const t: PieceType = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
-        self.piece = .{ .type = t, .row = 0, .col = 3, .rotation = 0 };
+        // The previewed 'next' piece becomes the active piece
+        self.piece = .{ .type = self.next, .row = 0, .col = 3, .rotation = 0 };
+        // Roll a new 'next' piece for the preview
         self.next = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
         if (!self.isValidPos(self.piece)) {
             self.game_over = true;
@@ -336,7 +340,7 @@ pub fn main() !void {
         }
 
         // Next piece preview
-        const preview_x = grid_x + grid_w_px + 40;
+        const preview_x = grid_x + grid_w_px + 60;
         const preview_y = grid_y;
         ctx.drawText("NEXT", @as(i32, @intFromFloat(preview_x)), @as(i32, @intFromFloat(preview_y)), 24, vgame.Color.white);
         const next_shape = SHAPES[@intFromEnum(game.next)];
@@ -346,17 +350,19 @@ pub fn main() !void {
                 preview_y + 40 + @as(f32, @floatFromInt(s[0])) * (CELL * 0.7), next_color);
         }
 
-        // Score, level, lines
-        const stats_x = grid_x + grid_w_px + 40;
+        // Score, level, lines — positioned right of the grid with enough
+        // room for drawNumber (which draws digits right-to-left from x)
+        const stats_x = grid_x + grid_w_px + 60;
+        const stats_x_right = stats_x + 200; // right edge for drawNumber
         const stats_y = preview_y + 200;
         ctx.drawText("SCORE", @as(i32, @intFromFloat(stats_x)), @as(i32, @intFromFloat(stats_y)), 24, vgame.Color.white);
-        ctx.drawNumber(game.score, .{ .x = stats_x, .y = stats_y + 35 });
+        ctx.drawNumber(game.score, .{ .x = stats_x_right, .y = stats_y + 35 });
 
         ctx.drawText("LINES", @as(i32, @intFromFloat(stats_x)), @as(i32, @intFromFloat(stats_y + 90)), 24, vgame.Color.white);
-        ctx.drawNumber(game.lines, .{ .x = stats_x, .y = stats_y + 125 });
+        ctx.drawNumber(game.lines, .{ .x = stats_x_right, .y = stats_y + 125 });
 
         ctx.drawText("LEVEL", @as(i32, @intFromFloat(stats_x)), @as(i32, @intFromFloat(stats_y + 180)), 24, vgame.Color.white);
-        ctx.drawNumber(game.level, .{ .x = stats_x, .y = stats_y + 215 });
+        ctx.drawNumber(game.level, .{ .x = stats_x_right, .y = stats_y + 215 });
 
         // Controls hint
         const ctrl_x = grid_x - 200;
