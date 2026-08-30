@@ -56,6 +56,8 @@ const Piece = struct {
     rotation: u2 = 0,
 };
 
+const GameState = enum { normal, dissolving };
+
 const Game = struct {
     grid: [GRID_H][GRID_W]?vgame.Color, // color = filled cell, null = empty
     piece: Piece,
@@ -67,6 +69,10 @@ const Game = struct {
     drop_interval: f32 = 1.0,
     game_over: bool = false,
     paused: bool = false,
+    state: GameState = .normal,
+    dissolve_timer: f32 = 0,
+    dissolve_rows: [4]usize = .{ 0, 0, 0, 0 },
+    dissolve_count: usize = 0,
 
     fn init(rand: *std.Random) Game {
         const t: PieceType = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
@@ -158,7 +164,7 @@ const Game = struct {
         return false;
     }
 
-    fn lockPiece(self: *Game) void {
+    fn lockPiece(self: *Game, rand: *std.Random) void {
         const cells = getCells(self.piece);
         const color = PIECE_COLORS[@intFromEnum(self.piece.type)];
         for (cells) |cell| {
@@ -168,30 +174,40 @@ const Game = struct {
                 self.grid[@intCast(r)][@intCast(c)] = color;
             }
         }
-        self.clearLines();
-    }
-
-    fn clearLines(self: *Game) void {
-        var cleared: usize = 0;
-        var row: usize = GRID_H;
-        while (row > 0) {
-            row -= 1;
+        var count: usize = 0;
+        for (0..GRID_H) |row| {
             var full = true;
             for (0..GRID_W) |c| {
                 if (self.grid[row][c] == null) { full = false; break; }
             }
             if (full) {
-                // Shift everything above down
-                var r = row;
-                while (r > 0) {
-                    r -= 1;
-                    self.grid[r + 1] = self.grid[r];
-                }
-                self.grid[0] = @splat(null);
-                cleared += 1;
-                row += 1; // re-check this row (now has shifted content)
+                self.dissolve_rows[count] = row;
+                count += 1;
             }
         }
+        self.dissolve_count = count;
+        if (count > 0) {
+            self.state = .dissolving;
+            self.dissolve_timer = 0;
+        }
+        self.spawnNew(rand);
+    }
+
+    fn finishClearLines(self: *Game) void {
+        const cleared = self.dissolve_count;
+        const rows: [4]usize = self.dissolve_rows;
+        // Process bottom-up so shifts don't interfere
+        for (0..cleared) |i| {
+            const row = rows[cleared - 1 - i];
+            var r = row;
+            while (r > 0) {
+                r -= 1;
+                self.grid[r + 1] = self.grid[r];
+            }
+            self.grid[0] = @splat(null);
+        }
+        self.dissolve_count = 0;
+        self.state = .normal;
         if (cleared > 0) {
             const points = [_]usize{ 0, 100, 300, 500, 800 };
             self.score += points[cleared] * self.level;
@@ -201,9 +217,9 @@ const Game = struct {
         }
     }
 
-    fn hardDrop(self: *Game) void {
+    fn hardDrop(self: *Game, rand: *std.Random) void {
         while (self.tryMove(1, 0)) {}
-        self.lockPiece();
+        self.lockPiece(rand);
     }
 };
 
@@ -235,29 +251,36 @@ pub fn main() !void {
         const fs = app.screen.size;
 
         if (!game.game_over and !game.paused) {
-            // Input
-            if (rl.isKeyPressed(.left)) _ = game.tryMove(0, -1);
-            if (rl.isKeyPressed(.right)) _ = game.tryMove(0, 1);
-            if (rl.isKeyPressed(.up)) _ = game.tryRotate();
-            if (rl.isKeyDown(.down)) {
-                if (game.tryMove(1, 0)) game.drop_timer = 0;
-            }
-            if (rl.isKeyPressed(.space)) {
-                game.hardDrop();
-                game.spawnNew(&rand);
-            }
-
-            // Gravity
-            game.drop_timer += dt;
-            if (game.drop_timer >= game.drop_interval) {
-                game.drop_timer = 0;
-                if (!game.tryMove(1, 0)) {
-                    game.lockPiece();
-                    game.spawnNew(&rand);
+            if (game.state == .dissolving) {
+                // Row dissolve animation — no input or gravity while dissolving
+                game.dissolve_timer += dt;
+                if (game.dissolve_timer >= 0.5) {
+                    game.dissolve_timer = 0;
+                    game.finishClearLines();
                 }
-            }
+            } else {
+                // Input
+                if (rl.isKeyPressed(.left)) _ = game.tryMove(0, -1);
+                if (rl.isKeyPressed(.right)) _ = game.tryMove(0, 1);
+                if (rl.isKeyPressed(.up)) _ = game.tryRotate();
+                if (rl.isKeyDown(.down)) {
+                    if (game.tryMove(1, 0)) game.drop_timer = 0;
+                }
+                if (rl.isKeyPressed(.space)) {
+                    game.hardDrop(&rand);
+                }
 
-            if (rl.isKeyPressed(.p)) game.paused = true;
+                // Gravity
+                game.drop_timer += dt;
+                if (game.drop_timer >= game.drop_interval) {
+                    game.drop_timer = 0;
+                    if (!game.tryMove(1, 0)) {
+                        game.lockPiece(&rand);
+                    }
+                }
+
+                if (rl.isKeyPressed(.p)) game.paused = true;
+            }
         } else if (game.paused) {
             if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) game.paused = false;
         } else if (game.game_over) {
@@ -292,6 +315,23 @@ pub fn main() !void {
                 if (game.grid[r][c]) |color| {
                     drawCell(&ctx, grid_x + @as(f32, @floatFromInt(c)) * CELL,
                         grid_y + @as(f32, @floatFromInt(r)) * CELL, color);
+                }
+            }
+        }
+
+        // Row dissolve animation: white flash fading out over completed rows
+        if (game.state == .dissolving) {
+            const progress = @min(1.0, game.dissolve_timer / 0.5);
+            const white = vgame.Color{ .r = 255, .g = 255, .b = 255, .a = @intCast(@as(u32, @intFromFloat(@min(255, @max(0, (1.0 - progress) * 255.0))))) };
+            for (0..game.dissolve_count) |i| {
+                const row = game.dissolve_rows[i];
+                for (0..GRID_W) |c| {
+                    ctx.drawRect(.{
+                        .x = grid_x + @as(f32, @floatFromInt(c)) * CELL,
+                        .y = grid_y + @as(f32, @floatFromInt(row)) * CELL,
+                        .width = CELL,
+                        .height = CELL,
+                    }, white);
                 }
             }
         }
