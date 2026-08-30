@@ -6,10 +6,14 @@ zig-out/
 flatpak-build/
 flatpak-repo/
 
+# Emacs backup files
+*~
+\#*\#
+.\#*
+
 # Editor files
 *.swp
 *.swo
-*~
 .DS_Store
 
 # IDE
