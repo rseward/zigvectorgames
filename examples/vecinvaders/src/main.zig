@@ -406,6 +406,7 @@ pub fn main() !void {
 
         // ── Render ────────────────────────────────────────────────
         var ctx = app.beginRender();
+        ctx.line_thickness = 1.25; // half the default 2.5 for a finer vector look
         defer ctx.end();
 
         // Player and aliens are the same size

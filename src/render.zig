@@ -32,6 +32,9 @@ pub const RenderContext = struct {
     screen: *Screen,
     camera: rl.Camera2D,
     ended: bool = false,
+    /// Line stroke thickness in design-space pixels. Games can override
+    /// this to make vector lines thinner or thicker. Default is 2.5.
+    line_thickness: f32 = DEFAULT_THICKNESS,
 
     /// End rendering — calls camera.end() and rl.endDrawing().
     /// Normally called via `defer ctx.end()`.
@@ -54,8 +57,7 @@ pub const RenderContext = struct {
         connect: bool,
         color: rl.Color,
     ) void {
-        _ = self;
-        drawLinesRaw(org, scale, rot, points, connect, color);
+        drawLinesRawThick(org, scale, rot, points, connect, color, self.line_thickness);
     }
 
     /// Draw a number using vector line segments (7-segment style digits).
@@ -144,8 +146,14 @@ pub const RenderContext = struct {
     }
 };
 
-/// Raw drawLines without RenderContext — used as callback for text.drawNumber.
+/// Raw drawLines with default thickness — used as callback for text.drawNumber.
 pub fn drawLinesRaw(org: Vector2, scale: f32, rot: f32, points: []const Vector2, connect: bool, color: rl.Color) void {
+    drawLinesRawThick(org, scale, rot, points, connect, color, DEFAULT_THICKNESS);
+}
+
+/// Raw drawLines with explicit thickness (in design-space pixels, scaled
+/// by current_render_scale for the actual draw call).
+pub fn drawLinesRawThick(org: Vector2, scale: f32, rot: f32, points: []const Vector2, connect: bool, color: rl.Color, thickness: f32) void {
     const Transformer = struct {
         org: Vector2,
         scale: f32,
@@ -158,9 +166,9 @@ pub fn drawLinesRaw(org: Vector2, scale: f32, rot: f32, points: []const Vector2,
         }
     };
     const t = Transformer{ .org = org, .scale = scale, .rot = rot };
-    const thickness = DEFAULT_THICKNESS * current_render_scale;
+    const scaled_thickness = thickness * current_render_scale;
     const bound = if (connect) points.len else (points.len - 1);
     for (0..bound) |i| {
-        rl.drawLineEx(t.apply(points[i]), t.apply(points[(i + 1) % points.len]), thickness, color);
+        rl.drawLineEx(t.apply(points[i]), t.apply(points[(i + 1) % points.len]), scaled_thickness, color);
     }
 }
