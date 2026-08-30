@@ -18,7 +18,7 @@ const Vector2 = rl.Vector2;
 const Screen = @import("screen.zig").Screen;
 const text = @import("text.zig");
 
-pub const DEFAULT_THICKNESS: f32 = 2.5;
+pub const DEFAULT_THICKNESS: f32 = 1.25;
 
 /// Current render_scale for thickness scaling. Set by App.beginRender()
 /// each frame so drawLinesRaw can scale line thickness proportionally.
