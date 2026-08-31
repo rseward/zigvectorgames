@@ -122,42 +122,75 @@ const Simulation = struct {
         const rand = prng.random();
 
         for (0..NUM_STARS) |i| {
-            // Place stars in a ring around the black hole, well outside ISCO
             const angle = rand.float(f32) * 2.0 * std.math.pi;
-            const min_dist = BH_ISCO + 80.0;
-            const max_dist = 460.0;
-            // Use sqrt distribution for uniform area coverage
-            const t = rand.float(f32);
-            const dist = min_dist + (max_dist - min_dist) * @sqrt(t);
 
-            const px = self.bh_x + @cos(angle) * dist;
-            const py = self.bh_y + @sin(angle) * dist;
+            if (i < 3) {
+                // First few stars: place close to the black hole, just outside
+                // the photon sphere, with unstable orbits so they spiral in
+                // and get consumed within the first few minutes.
+                const close_dist = BH_PHOTON_SPHERE + 15.0 + rand.float(f32) * 25.0;
+                const px = self.bh_x + @cos(angle) * close_dist;
+                const py = self.bh_y + @sin(angle) * close_dist;
 
-            // Orbital velocity: v = sqrt(G*M/r) for circular orbit
-            // Add some eccentricity by randomizing the factor
-            const orbit_speed = @sqrt(G * BH_MASS / dist);
-            const eccentricity = rand.float(f32) * 0.4 + 0.8; // 0.8 to 1.2
-            const speed = orbit_speed * eccentricity;
+                // Low orbital velocity — not enough for a stable orbit at this
+                // distance, so the star will be pulled in quickly.
+                const orbit_speed = @sqrt(G * BH_MASS / close_dist) * 0.5;
+                const vx = -@sin(angle) * orbit_speed;
+                const vy = @cos(angle) * orbit_speed;
 
-            // Perpendicular velocity for orbital motion (counterclockwise)
-            const vx = -@sin(angle) * speed;
-            const vy = @cos(angle) * speed;
+                const class = STAR_CLASSES[rand.intRangeLessThan(usize, 0, STAR_CLASSES.len)];
+                const radius = STAR_MIN_RADIUS + rand.float(f32) * (STAR_MAX_RADIUS - STAR_MIN_RADIUS);
 
-            const class = STAR_CLASSES[rand.intRangeLessThan(usize, 0, STAR_CLASSES.len)];
-            const radius = STAR_MIN_RADIUS + rand.float(f32) * (STAR_MAX_RADIUS - STAR_MIN_RADIUS);
+                self.stars[i] = .{
+                    .pos = .{ .x = px, .y = py },
+                    .vel = .{ .x = vx, .y = vy },
+                    .radius = radius,
+                    .class = class,
+                    .base_color = starClassColor(class),
+                    .alive = true,
+                    .accreting = false,
+                    .accretion_heat = 0.0,
+                    .trail = @splat(.{ .x = 0, .y = 0 }),
+                    .trail_len = 0,
+                };
+            } else {
+                // Remaining stars: place in a ring well outside ISCO with
+                // stable-ish orbits.
+                const min_dist = BH_ISCO + 80.0;
+                const max_dist = 460.0;
+                // Use sqrt distribution for uniform area coverage
+                const t = rand.float(f32);
+                const dist = min_dist + (max_dist - min_dist) * @sqrt(t);
 
-            self.stars[i] = .{
-                .pos = .{ .x = px, .y = py },
-                .vel = .{ .x = vx, .y = vy },
-                .radius = radius,
-                .class = class,
-                .base_color = starClassColor(class),
-                .alive = true,
-                .accreting = false,
-                .accretion_heat = 0.0,
-                .trail = @splat(.{ .x = 0, .y = 0 }),
-                .trail_len = 0,
-            };
+                const px = self.bh_x + @cos(angle) * dist;
+                const py = self.bh_y + @sin(angle) * dist;
+
+                // Orbital velocity: v = sqrt(G*M/r) for circular orbit
+                // Add some eccentricity by randomizing the factor
+                const orbit_speed = @sqrt(G * BH_MASS / dist);
+                const eccentricity = rand.float(f32) * 0.4 + 0.8; // 0.8 to 1.2
+                const speed = orbit_speed * eccentricity;
+
+                // Perpendicular velocity for orbital motion (counterclockwise)
+                const vx = -@sin(angle) * speed;
+                const vy = @cos(angle) * speed;
+
+                const class = STAR_CLASSES[rand.intRangeLessThan(usize, 0, STAR_CLASSES.len)];
+                const radius = STAR_MIN_RADIUS + rand.float(f32) * (STAR_MAX_RADIUS - STAR_MIN_RADIUS);
+
+                self.stars[i] = .{
+                    .pos = .{ .x = px, .y = py },
+                    .vel = .{ .x = vx, .y = vy },
+                    .radius = radius,
+                    .class = class,
+                    .base_color = starClassColor(class),
+                    .alive = true,
+                    .accreting = false,
+                    .accretion_heat = 0.0,
+                    .trail = @splat(.{ .x = 0, .y = 0 }),
+                    .trail_len = 0,
+                };
+            }
         }
     }
 
@@ -379,11 +412,14 @@ pub fn main() !void {
     var sim = Simulation{};
     sim.init(&prng);
 
+    var show_help = false;
+
     while (app.frame()) {
         const dt = app.delta;
         const fs = app.screen.size;
 
         // Input
+        if (rl.isKeyPressed(.h)) show_help = !show_help;
         if (rl.isKeyPressed(.p)) sim.paused = !sim.paused;
         if (rl.isKeyPressed(.r)) {
             var new_prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
@@ -448,8 +484,36 @@ pub fn main() !void {
         const speed_str = std.fmt.bufPrintZ(&speed_buf, "Speed: {d:.1}x", .{sim.time_scale}) catch unreachable;
         ctx.drawText(speed_str, 20, 80, 20, .{ .r = 120, .g = 120, .b = 140, .a = 200 });
 
-        ctx.drawText("+/- to adjust  P pause  R reset",
+        ctx.drawText("+/- speed  P pause  R reset  H help",
             20, 105, 18, .{ .r = 90, .g = 90, .b = 110, .a = 180 });
+
+        if (show_help) {
+            vgame.drawOverlay(fs, .{
+                .title = "VecBlackhole",
+                .lines = &.{
+                    "Stars have different colors based on their",
+                    "temperature, just like real stars:",
+                    "",
+                    "  Blue    = hottest (O-type, 30,000K+)",
+                    "  White   = hot (A/F-type, ~8,000K)",
+                    "  Yellow  = Sun-like (G-type, ~6,000K)",
+                    "  Orange  = cool (K-type, ~4,000K)",
+                    "  Red     = coolest (M-type, ~3,000K)",
+                    "",
+                    "As stars fall toward the black hole:",
+                    "  - They turn red: gravity stretches light",
+                    "    (gravitational redshift)",
+                    "  - Stars moving toward you look bluer",
+                    "    (Doppler shift, like a siren)",
+                    "  - Near the event horizon they heat up and",
+                    "    glow white then blue (accretion disk)",
+                    "  - The bright ring is the Einstein ring,",
+                    "    where gravity bends light into a circle",
+                    "",
+                    "Press H to close this help",
+                },
+            });
+        }
 
         if (sim.paused) {
             vgame.drawOverlay(fs, .{
