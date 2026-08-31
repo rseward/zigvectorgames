@@ -12,28 +12,67 @@ const rl = vgame.rl;
 const GRID_W: usize = 10;
 const GRID_H: usize = 20;
 const CELL: f32 = 35.0; // pixel size of each cell
+const LOCK_DELAY_TIME: f32 = 0.5; // grace period before locking (seconds)
 
 // Tetromino shapes — each piece defined as 4 (row, col) offsets from a pivot.
 // Rotations computed at runtime by rotating around the pivot.
 const PieceType = enum(usize) { I, O, T, S, Z, L, J };
 const PIECE_COUNT: usize = 7;
 
-// Base shapes (row, col) for each piece type in its spawn orientation.
-const SHAPES = [PIECE_COUNT][4][2]i32{
-    // I: horizontal line
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 } },
-    // O: 2x2 square
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } },
-    // T: T-shape
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 1 } },
-    // S: S-shape
-    .{ .{ 0, 1 }, .{ 0, 2 }, .{ 1, 0 }, .{ 1, 1 } },
-    // Z: Z-shape
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 }, .{ 1, 2 } },
-    // L: L-shape
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 0 } },
-    // J: J-shape
-    .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 2 } },
+// Base shapes (row, col) for each piece type in each of 4 rotations.
+// Uses the Super Rotation System (SRS) convention: pieces rotate around
+// their geometric center. States are precomputed to avoid floating-point
+// rounding issues with half-integer centroids.
+const SHAPES = [PIECE_COUNT][4][4][2]i32{
+    // I: horizontal line — rotates around center of the 4 cells
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 } },
+        .{ .{ 0, 2 }, .{ 1, 2 }, .{ 2, 2 }, .{ 3, 2 } },
+        .{ .{ 3, 0 }, .{ 3, 1 }, .{ 3, 2 }, .{ 3, 3 } },
+        .{ .{ 0, 0 }, .{ 1, 0 }, .{ 2, 0 }, .{ 3, 0 } },
+    },
+    // O: 2x2 square — visually identical in all rotations
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } },
+    },
+    // T: T-shape — rotates around the center of the 3-wide top
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 1 } },
+        .{ .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 1 } },
+        .{ .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 }, .{ 1, 2 } },
+        .{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 0 } },
+    },
+    // S: S-shape — rotates around center
+    .{
+        .{ .{ 0, 1 }, .{ 0, 2 }, .{ 1, 0 }, .{ 1, 1 } },
+        .{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 1 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, -1 }, .{ 1, 0 } },
+        .{ .{ 0, -1 }, .{ 1, -1 }, .{ 1, 0 }, .{ 2, 0 } },
+    },
+    // Z: Z-shape — rotates around center
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 }, .{ 1, 2 } },
+        .{ .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 0 } },
+        .{ .{ 0, -1 }, .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 } },
+        .{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 2, 1 } },
+    },
+    // L: L-shape — rotates around center
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 0 } },
+        .{ .{ 0, 1 }, .{ 1, 1 }, .{ 2, 0 }, .{ 2, 1 } },
+        .{ .{ 0, 2 }, .{ 1, 0 }, .{ 1, 1 }, .{ 1, 2 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 1 }, .{ 2, 1 } },
+    },
+    // J: J-shape — rotates around center
+    .{
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, 2 }, .{ 1, 2 } },
+        .{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 2, 0 } },
+        .{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 1, 2 } },
+        .{ .{ 0, 1 }, .{ 1, 1 }, .{ 2, 0 }, .{ 2, 1 } },
+    },
 };
 
 // Colors for each piece type (standard Tetris guideline colors)
@@ -69,6 +108,8 @@ const Game = struct {
     drop_interval: f32 = 1.0,
     game_over: bool = false,
     paused: bool = false,
+    touching: bool = false,   // piece is resting on something below
+    lock_delay: f32 = 0,     // time since piece started touching
     state: GameState = .normal,
     dissolve_timer: f32 = 0,
     dissolve_rows: [4]usize = .{ 0, 0, 0, 0 },
@@ -92,35 +133,21 @@ const Game = struct {
         self.piece = .{ .type = self.next, .row = 0, .col = 3, .rotation = 0 };
         // Roll a new 'next' piece for the preview
         self.next = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
+        self.touching = false;
+        self.lock_delay = 0;
         if (!self.isValidPos(self.piece)) {
             self.game_over = true;
         }
     }
 
     /// Get the 4 cell coordinates for a piece in its current rotation.
+    /// Uses precomputed SRS rotation states — each piece type has 4
+    /// explicit shape tables, so no runtime rotation math is needed.
     fn getCells(piece: Piece) [4][2]i32 {
         var cells: [4][2]i32 = undefined;
-        const shape = SHAPES[@intFromEnum(piece.type)];
+        const shape = SHAPES[@intFromEnum(piece.type)][piece.rotation];
         for (shape, 0..) |s, i| {
-            var r = s[0];
-            var c = s[1];
-            // Rotate around the piece center
-            switch (piece.rotation) {
-                0 => {},
-                1 => { const tmp = r; r = c; c = -tmp; },
-                2 => { r = -r; c = -c; },
-                3 => { const tmp = r; r = -c; c = tmp; },
-            }
-            // For I piece, adjust pivot offset after rotation
-            if (piece.type == .I) {
-                switch (piece.rotation) {
-                    1 => { r += 1; },
-                    2 => { r += 1; c -= 1; },
-                    3 => { c -= 1; },
-                    else => {},
-                }
-            }
-            cells[i] = .{ piece.row + r, piece.col + c };
+            cells[i] = .{ piece.row + s[0], piece.col + s[1] };
         }
         return cells;
     }
@@ -259,7 +286,7 @@ pub fn main() !void {
                     game.finishClearLines();
                 }
             } else {
-                // Input
+                // Input — player can always move/rotate, even while touching
                 if (rl.isKeyPressed(.left)) _ = game.tryMove(0, -1);
                 if (rl.isKeyPressed(.right)) _ = game.tryMove(0, 1);
                 if (rl.isKeyPressed(.up)) _ = game.tryRotate();
@@ -270,11 +297,34 @@ pub fn main() !void {
                     game.hardDrop(&rand);
                 }
 
-                // Gravity
+                // Gravity + lock delay
                 game.drop_timer += dt;
                 if (game.drop_timer >= game.drop_interval) {
                     game.drop_timer = 0;
-                    if (!game.tryMove(1, 0)) {
+                    if (game.tryMove(1, 0)) {
+                        // Piece moved down successfully — no longer touching
+                        game.touching = false;
+                        game.lock_delay = 0;
+                    } else {
+                        // Can't move down — piece is touching something
+                        if (!game.touching) {
+                            game.touching = true;
+                            game.lock_delay = 0;
+                        }
+                    }
+                }
+
+                // If touching, count up the lock delay. If the player slid
+                // the piece into a gap (tryMove succeeds), un-touch.
+                if (game.touching) {
+                    game.lock_delay += dt;
+                    // Check if the piece can now fall (maybe it was nudged sideways)
+                    if (game.tryMove(1, 0)) {
+                        game.touching = false;
+                        game.lock_delay = 0;
+                        game.drop_timer = 0;
+                    } else if (game.lock_delay >= LOCK_DELAY_TIME) {
+                        // Grace period expired — lock the piece
                         game.lockPiece(&rand);
                     }
                 }
@@ -383,7 +433,7 @@ pub fn main() !void {
         const preview_x = grid_x + grid_w_px + 60;
         const preview_y = grid_y;
         ctx.drawText("NEXT", @as(i32, @intFromFloat(preview_x)), @as(i32, @intFromFloat(preview_y)), 24, vgame.Color.white);
-        const next_shape = SHAPES[@intFromEnum(game.next)];
+        const next_shape = SHAPES[@intFromEnum(game.next)][0]; // rotation 0 for preview
         const next_color = PIECE_COLORS[@intFromEnum(game.next)];
         for (next_shape) |s| {
             drawCell(&ctx, preview_x + @as(f32, @floatFromInt(s[1])) * (CELL * 0.7),
