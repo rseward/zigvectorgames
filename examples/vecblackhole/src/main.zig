@@ -276,6 +276,18 @@ const Simulation = struct {
             const inward_force = 20.0 * dt;
             star.vel.x += (dx / dist) * inward_force;
             star.vel.y += (dy / dist) * inward_force;
+        } else {
+            // ── Gravitational wave orbital decay ──
+            // In general relativity, orbiting bodies radiate gravitational
+            // waves and slowly lose orbital energy. The power radiated scales
+            // as 1/r^4 (quadrupole formula), so distant stars barely decay
+            // while closer ones spiral in faster. Over the simulation's
+            // timescale every star eventually falls in.
+            const gw_coeff = 8.0e6; // tuned for visible decay within minutes
+            const gw_drag = gw_coeff / (dist * dist * dist * dist) * dt;
+            const clamped_drag = @min(0.01, gw_drag); // prevent runaway at close range
+            star.vel.x *= (1.0 - clamped_drag);
+            star.vel.y *= (1.0 - clamped_drag);
         }
 
         // Update position
