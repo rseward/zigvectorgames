@@ -80,6 +80,17 @@ fn starClassColor(class: StarClass) vgame.Color {
     };
 }
 
+// ── Particle ───────────────────────────────────────────────────────
+
+const Particle = struct {
+    pos: Vector2,
+    vel: Vector2,
+    radius: f32,
+    color: vgame.Color,
+    life: f32, // 1.0 = just spawned, 0.0 = dead
+    alive: bool = true,
+};
+
 // ── Star ───────────────────────────────────────────────────────────
 
 const Star = struct {
@@ -92,6 +103,8 @@ const Star = struct {
     // Accretion state: when star crosses ISCO it starts spiraling
     accreting: bool = false,
     accretion_heat: f32 = 0.0, // 0 = cool, 1 = max heat (blue-hot)
+    // Shattering: when star gets close to horizon it breaks into particles
+    shattering: bool = false,
     // Trail for visual effect as star spirals in
     trail: [8]Vector2 = @splat(.{ .x = 0, .y = 0 }),
     trail_len: usize = 0,
@@ -99,8 +112,11 @@ const Star = struct {
 
 // ── Simulation ─────────────────────────────────────────────────────
 
+const NUM_PARTICLES: usize = 200;
+
 const Simulation = struct {
     stars: [NUM_STARS]Star = undefined,
+    particles: [NUM_PARTICLES]Particle = undefined,
     bh_x: f32 = DESIGN_W / 2,
     bh_y: f32 = DESIGN_H / 2,
     num_alive: usize = NUM_STARS,
@@ -118,6 +134,18 @@ const Simulation = struct {
         self.reset_timer = 0;
         self.resetting = false;
         self.num_alive = NUM_STARS;
+
+        // Clear all particles
+        for (0..NUM_PARTICLES) |i| {
+            self.particles[i] = .{
+                .pos = .{ .x = 0, .y = 0 },
+                .vel = .{ .x = 0, .y = 0 },
+                .radius = 0,
+                .color = .{ .r = 0, .g = 0, .b = 0, .a = 0 },
+                .life = 0,
+                .alive = false,
+            };
+        }
 
         const rand = prng.random();
 
@@ -150,6 +178,7 @@ const Simulation = struct {
                     .alive = true,
                     .accreting = false,
                     .accretion_heat = 0.0,
+                    .shattering = false,
                     .trail = @splat(.{ .x = 0, .y = 0 }),
                     .trail_len = 0,
                 };
@@ -187,6 +216,7 @@ const Simulation = struct {
                     .alive = true,
                     .accreting = false,
                     .accretion_heat = 0.0,
+                    .shattering = false,
                     .trail = @splat(.{ .x = 0, .y = 0 }),
                     .trail_len = 0,
                 };
@@ -214,10 +244,104 @@ const Simulation = struct {
             self.updateStar(&self.stars[i], sim_dt);
         }
 
+        // Update particles
+        self.updateParticles(sim_dt);
+
         // Check if all stars consumed
         if (self.num_alive == 0 and !self.resetting) {
             self.resetting = true;
             self.reset_timer = 0;
+        }
+    }
+
+    fn updateParticles(self: *Simulation, dt: f32) void {
+        for (0..NUM_PARTICLES) |i| {
+            if (!self.particles[i].alive) continue;
+
+            var p = &self.particles[i];
+
+            // Orbital motion: gravity pulls toward center, tangential velocity keeps it orbiting
+            const dx = self.bh_x - p.pos.x;
+            const dy = self.bh_y - p.pos.y;
+            const dist_sq = dx * dx + dy * dy;
+            const dist = @sqrt(dist_sq);
+
+            if (dist < 2.0) {
+                // Too close to center, kill particle
+                p.alive = false;
+                continue;
+            }
+
+            // Gravitational acceleration
+            const force = G * BH_MASS / (dist_sq + 4.0);
+            const ax = (dx / dist) * force;
+            const ay = (dy / dist) * force;
+
+            p.vel.x += ax * dt;
+            p.vel.y += ay * dt;
+
+            // Add slight inward spiral (drag)
+            const drag = 0.3 * dt;
+            p.vel.x *= (1.0 - drag);
+            p.vel.y *= (1.0 - drag);
+
+            // Update position
+            p.pos.x += p.vel.x * dt;
+            p.pos.y += p.vel.y * dt;
+
+            // Decrease life
+            p.life -= dt * 0.5; // particles last about 2 seconds
+            if (p.life <= 0.0) {
+                p.alive = false;
+            }
+        }
+    }
+
+    /// Spawn shatter particles from a star's position.
+    fn spawnShatterParticles(self: *Simulation, star: *const Star) void {
+        const num_particles: usize = 10; // 10 particles per star
+
+        for (0..num_particles) |i| {
+            // Find a free particle slot
+            var slot: ?usize = null;
+            for (0..NUM_PARTICLES) |j| {
+                if (!self.particles[j].alive) {
+                    slot = j;
+                    break;
+                }
+            }
+            if (slot == null) break; // no free slots
+
+            const s = slot.?;
+            const angle = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(num_particles)) * 2.0 * std.math.pi;
+            const spread: f32 = 3.0 + @as(f32, @floatFromInt(i)) * 0.5;
+
+            // Position: slightly offset from star center
+            const px = star.pos.x + @cos(angle) * spread;
+            const py = star.pos.y + @sin(angle) * spread;
+
+            // Velocity: tangential (orbital)
+            const dist_to_bh = @sqrt((self.bh_x - star.pos.x) * (self.bh_x - star.pos.x) +
+                (self.bh_y - star.pos.y) * (self.bh_y - star.pos.y));
+            const orbit_speed = @sqrt(G * BH_MASS / @max(1.0, dist_to_bh)) * 0.8;
+
+            // Tangential direction (perpendicular to radial)
+            const rx = (self.bh_x - star.pos.x) / dist_to_bh;
+            const ry = (self.bh_y - star.pos.y) / dist_to_bh;
+            const tx = -ry;
+            const ty = rx;
+
+            const vx = tx * orbit_speed;
+            const vy = ty * orbit_speed;
+
+            self.particles[s] = .{
+                .pos = .{ .x = px, .y = py },
+                .vel = .{ .x = vx, .y = vy },
+                .radius = 1.0 + @as(f32, @floatFromInt(i % 3)) * 0.5,
+                .color = star.base_color,
+                .life = 1.0,
+                .alive = true,
+            };
         }
     }
 
@@ -227,6 +351,17 @@ const Simulation = struct {
         const dy = self.bh_y - star.pos.y;
         const dist_sq = dx * dx + dy * dy;
         const dist = @sqrt(dist_sq);
+
+        // ── Shattering check ──
+        // When star gets within 2*Rs, it begins to shatter into particles.
+        if (dist < BH_RS * 2.0 and !star.shattering) {
+            star.shattering = true;
+            self.spawnShatterParticles(star);
+            // Star is consumed — mark as dead, particles provide visual effect
+            star.alive = false;
+            self.num_alive -= 1;
+            return;
+        }
 
         // ── Event horizon check ──
         // Once a star crosses Rs, it's consumed — no return.
@@ -471,7 +606,23 @@ pub fn main() !void {
         // ── Stars ──
         for (0..NUM_STARS) |i| {
             if (!sim.stars[i].alive) continue;
+            if (sim.stars[i].shattering) continue; // invisible while shattering
             drawStar(&ctx, &sim.stars[i], sim.bh_x, sim.bh_y);
+        }
+
+        // ── Shatter particles ──
+        for (0..NUM_PARTICLES) |i| {
+            if (!sim.particles[i].alive) continue;
+            const p = &sim.particles[i];
+            const alpha: u8 = @intFromFloat(@as(f32, @floatFromInt(p.color.a)) * p.life);
+            const radius: f32 = p.radius * p.life;
+            if (radius < 0.5) continue;
+            ctx.drawCircle(p.pos, radius, .{
+                .r = p.color.r,
+                .g = p.color.g,
+                .b = p.color.b,
+                .a = alpha,
+            });
         }
 
         // ── Event horizon (black disk) ──
