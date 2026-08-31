@@ -28,7 +28,7 @@ const Vector2 = vgame.Vector2;
 const DESIGN_W: f32 = 1280.0;
 const DESIGN_H: f32 = 960.0;
 
-const NUM_STARS: usize = 24;
+const NUM_STARS: usize = 80;
 
 // Black hole parameters (in design-space pixels)
 const BH_MASS: f32 = 8000.0;        // gravitational mass parameter
@@ -440,8 +440,9 @@ pub fn main() !void {
         // ── HUD ──
         ctx.drawText("VecBlackhole — Schwarzschild Simulation",
             20, 20, 24, .{ .r = 150, .g = 150, .b = 180, .a = 200 });
-        ctx.drawText("Stars:", 20, 55, 20, .{ .r = 120, .g = 120, .b = 140, .a = 200 });
-        ctx.drawNumber(sim.num_alive, .{ .x = 120, .y = 55 });
+        var stars_buf: [16:0]u8 = undefined;
+        const stars_str = std.fmt.bufPrintZ(&stars_buf, "Stars: {d}", .{sim.num_alive}) catch unreachable;
+        ctx.drawText(stars_str, 20, 55, 20, .{ .r = 120, .g = 120, .b = 140, .a = 200 });
 
         var speed_buf: [32:0]u8 = undefined;
         const speed_str = std.fmt.bufPrintZ(&speed_buf, "Speed: {d:.1}x", .{sim.time_scale}) catch unreachable;
