@@ -260,7 +260,7 @@ const Simulation = struct {
 
             var p = &self.particles[i];
 
-            // Orbital motion: gravity pulls toward center, tangential velocity keeps it orbiting
+            // Vector from particle to black hole
             const dx = self.bh_x - p.pos.x;
             const dy = self.bh_y - p.pos.y;
             const dist_sq = dx * dx + dy * dy;
@@ -272,27 +272,95 @@ const Simulation = struct {
                 continue;
             }
 
-            // Gravitational acceleration
-            const force = G * BH_MASS / (dist_sq + 4.0);
-            const ax = (dx / dist) * force;
-            const ay = (dy / dist) * force;
+            // ── Phase 1: Inbound — gravity pulls particle toward the hole ──
+            // While outside the settling zone, apply gravitational acceleration
+            // and let the particle spiral inward.
+            const settle_zone = BH_RS * 1.8; // start settling when within 1.8*Rs
+            if (dist > settle_zone) {
+                // Gravitational acceleration
+                const force = G * BH_MASS / (dist_sq + 4.0);
+                const ax = (dx / dist) * force;
+                const ay = (dy / dist) * force;
 
-            p.vel.x += ax * dt;
-            p.vel.y += ay * dt;
+                p.vel.x += ax * dt;
+                p.vel.y += ay * dt;
 
-            // Add slight inward spiral (drag)
-            const drag = 0.3 * dt;
-            p.vel.x *= (1.0 - drag);
-            p.vel.y *= (1.0 - drag);
+                // Slight drag to encourage inward spiral
+                const drag = 0.15 * dt;
+                p.vel.x *= (1.0 - drag);
+                p.vel.y *= (1.0 - drag);
+            } else {
+                // ── Phase 2: Settling — decelerate radially, maintain tangential ──
+                // Decompose velocity into radial (toward BH) and tangential components.
+                const rx = dx / dist; // unit radial (toward BH)
+                const ry = dy / dist;
+                const tx = -ry;       // unit tangential (perpendicular)
+                const ty = rx;
+
+                const radial_vel = p.vel.x * rx + p.vel.y * ry;
+                const tang_vel = p.vel.x * tx + p.vel.y * ty;
+
+                // Decelerate radial motion: the closer to the horizon, the more
+                // we damp the inward velocity so the particle settles onto the ring.
+                // At dist == BH_RS, radial velocity is fully damped.
+                const radial_damp = @max(0.0, (dist - BH_RS) / (settle_zone - BH_RS));
+                // radial_damp: 1.0 at settle_zone (no damping), 0.0 at BH_RS (full damping)
+                const new_radial = radial_vel * (1.0 - (1.0 - radial_damp) * 0.95);
+
+                // Boost tangential velocity: the closer to the horizon, the faster
+                // the orbital speed (Keplerian: v ~ 1/sqrt(r)).
+                const target_tangential = @sqrt(G * BH_MASS / @max(BH_RS, dist));
+                // Blend current tangential toward the target, stronger near horizon
+                const tang_blend = 0.3 + 0.7 * (1.0 - radial_damp);
+                const new_tangential = tang_vel * (1.0 - tang_blend) + target_tangential * tang_blend;
+
+                // Reconstruct velocity
+                p.vel.x = rx * new_radial + tx * new_tangential;
+                p.vel.y = ry * new_radial + ty * new_tangential;
+
+                // If particle has crossed inside the horizon, clamp it to the ring
+                if (dist < BH_RS) {
+                    p.pos.x = self.bh_x + rx * BH_RS;
+                    p.pos.y = self.bh_y + ry * BH_RS;
+                }
+            }
 
             // Update position
             p.pos.x += p.vel.x * dt;
             p.pos.y += p.vel.y * dt;
 
-            // Decrease life
-            p.life -= dt * 0.5; // particles last about 2 seconds
-            if (p.life <= 0.0) {
-                p.alive = false;
+            // ── Brightening & life management ──
+            // Particles only start dying after they settle on the ring and reach
+            // peak brightness. We track this by checking if the particle is near
+            // the horizon and has high tangential speed.
+            const speed = @sqrt(p.vel.x * p.vel.x + p.vel.y * p.vel.y);
+            const near_horizon = dist < BH_RS * 1.3;
+            const fast_enough = speed > @sqrt(G * BH_MASS / BH_RS) * 0.5;
+
+            if (near_horizon and fast_enough) {
+                // Settled on the ring: brighten toward white, then fade out
+                // Brighten: interpolate color toward white based on proximity and speed
+                const proximity = @max(0.0, 1.0 - (dist - BH_RS) / (BH_RS * 0.5));
+                const speed_factor = @min(1.0, speed / (@sqrt(G * BH_MASS / BH_RS) * 1.2));
+                const brightness = @min(1.0, proximity * 0.5 + speed_factor * 0.5);
+
+                // Interpolate color toward white
+                p.color.r = @intFromFloat(@min(255, @as(f32, @floatFromInt(p.color.r)) + (255.0 - @as(f32, @floatFromInt(p.color.r))) * brightness * 0.3));
+                p.color.g = @intFromFloat(@min(255, @as(f32, @floatFromInt(p.color.g)) + (255.0 - @as(f32, @floatFromInt(p.color.g))) * brightness * 0.3));
+                p.color.b = @intFromFloat(@min(255, @as(f32, @floatFromInt(p.color.b)) + (255.0 - @as(f32, @floatFromInt(p.color.b))) * brightness * 0.3));
+
+                // Fade out: life decreases, particle is consumed by the black hole
+                p.life -= dt * 0.8;
+                if (p.life <= 0.0) {
+                    p.alive = false;
+                }
+            } else {
+                // Still inbound: no life decay yet, but cap total lifetime
+                // to prevent particles from orbiting forever if they miss the ring
+                p.life -= dt * 0.05; // very slow decay during inbound phase
+                if (p.life <= 0.0) {
+                    p.alive = false;
+                }
             }
         }
     }
@@ -614,15 +682,45 @@ pub fn main() !void {
         for (0..NUM_PARTICLES) |i| {
             if (!sim.particles[i].alive) continue;
             const p = &sim.particles[i];
-            const alpha: u8 = @intFromFloat(@as(f32, @floatFromInt(p.color.a)) * p.life);
-            const radius: f32 = p.radius * p.life;
+
+            // Compute distance to horizon for glow effect
+            const pdx = sim.bh_x - p.pos.x;
+            const pdy = sim.bh_y - p.pos.y;
+            const pdist = @sqrt(pdx * pdx + pdy * pdy);
+            const near_horizon = pdist < BH_RS * 1.3;
+
+            // Alpha: full life-based fade, but boosted when settled on ring
+            var alpha: f32 = @as(f32, @floatFromInt(p.color.a)) * p.life;
+            if (near_horizon) {
+                // Settled particles glow brighter
+                alpha = @min(255.0, alpha * 1.5);
+            }
+
+            // Radius: slightly larger when settled (glow from heating)
+            var radius: f32 = p.radius * p.life;
+            if (near_horizon) {
+                radius *= 1.3;
+            }
             if (radius < 0.5) continue;
+
+            const a: u8 = @intFromFloat(@max(0.0, @min(255.0, alpha)));
             ctx.drawCircle(p.pos, radius, .{
                 .r = p.color.r,
                 .g = p.color.g,
                 .b = p.color.b,
-                .a = alpha,
+                .a = a,
             });
+
+            // Extra glow halo for settled particles
+            if (near_horizon and p.life > 0.3) {
+                const glow_a: u8 = @intFromFloat(@max(0.0, @min(255.0, alpha * 0.3)));
+                ctx.drawCircle(p.pos, radius * 2.0, .{
+                    .r = p.color.r,
+                    .g = p.color.g,
+                    .b = p.color.b,
+                    .a = glow_a,
+                });
+            }
         }
 
         // ── Event horizon (black disk) ──
