@@ -426,7 +426,7 @@ fn mainImpl() !void {
                                     .color = vgame.Color.green,
                                     .scale = app.screen.scale,
                                     .speed = 250.0,
-                                    .ttl = 2.0,
+                                    .ttl = 1.0,
                                 }, &rand);
                             }
                         }
@@ -447,7 +447,7 @@ fn mainImpl() !void {
                                 .color = vgame.Color.red,
                                 .scale = app.screen.scale,
                                 .speed = 250.0,
-                                .ttl = 2.5,
+                                .ttl = 1.25,
                             }, &rand);
                             if (player.lives == 0) game_over = true;
                         }
