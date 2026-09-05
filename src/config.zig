@@ -11,4 +11,10 @@ pub const AppConfig = struct {
     window_resizable: bool = true,
     target_fps: i32 = 60,
     background_color: rl.Color = rl.Color.black,
+    /// Enable MSAA 4x anti-aliasing for smoother vector lines.
+    msaa: bool = true,
+    /// Enable bloom/glow post-processing. Renders the scene to a
+    /// texture, then composites additive blurred copies on top to
+    /// produce a soft CRT-vector glow around all bright lines.
+    glow: bool = true,
 };

@@ -33,10 +33,21 @@ pub const App = struct {
     allocator: std.mem.Allocator,
     initialized: bool = false,
 
+    // Glow post-processing
+    glow_target: ?rl.RenderTexture2D = null,
+    glow_blur: ?rl.RenderTexture2D = null,
+    glow_target_w: i32 = 0,
+    glow_target_h: i32 = 0,
+
     pub fn init(allocator: std.mem.Allocator, config: AppConfig) !App {
+        var flags: rl.ConfigFlags = .{};
         if (config.window_resizable) {
-            rl.setConfigFlags(.{ .window_resizable = true });
+            flags.window_resizable = true;
         }
+        if (config.msaa) {
+            flags.msaa_4x_hint = true;
+        }
+        rl.setConfigFlags(flags);
 
         rl.initWindow(
             @intFromFloat(config.design_size.x),
@@ -61,16 +72,56 @@ pub const App = struct {
 
         rl.setTargetFPS(config.target_fps);
 
-        return .{
+        var app: App = .{
             .screen = screen,
             .config = config,
             .allocator = allocator,
             .initialized = true,
         };
+
+        // Initialize glow render textures at the actual window size
+        if (config.glow) {
+            try app.initGlow();
+        }
+
+        return app;
+    }
+
+    /// Create (or recreate) the render textures used for the glow effect.
+    /// Called at init and when the window size changes.
+    fn initGlow(self: *App) !void {
+        const w = rl.getScreenWidth();
+        const h = rl.getScreenHeight();
+        if (w <= 0 or h <= 0) return;
+
+        // Recreate only if size changed
+        if (self.glow_target != null and self.glow_target_w == w and self.glow_target_h == h) return;
+
+        self.deinitGlow();
+
+        self.glow_target = try rl.loadRenderTexture(w, h);
+        self.glow_blur = try rl.loadRenderTexture(w, h);
+        self.glow_target_w = w;
+        self.glow_target_h = h;
+
+        // Set the blur texture to use bilinear filtering for smooth scaling
+        rl.setTextureFilter(self.glow_blur.?.texture, .bilinear);
+    }
+
+    fn deinitGlow(self: *App) void {
+        if (self.glow_target) |t| {
+            t.unload();
+            self.glow_target = null;
+        }
+        if (self.glow_blur) |t| {
+            t.unload();
+            self.glow_blur = null;
+        }
     }
 
     pub fn deinit(self: *App) void {
         if (self.audio) |*a| a.deinit();
+        self.deinitGlow();
         if (self.initialized) rl.closeWindow();
     }
 
@@ -112,6 +163,7 @@ pub const App = struct {
 
         if (self.screen.changed()) {
             self.screen.update();
+            if (self.config.glow) self.initGlow() catch {};
         }
 
         self.frame_count += 1;
@@ -124,9 +176,20 @@ pub const App = struct {
     /// the actual window. Games never need to think about screen resolution —
     /// they always work in the fixed design_size coordinate system.
     /// Call `ctx.end()` (via defer) to finish drawing.
+    ///
+    /// When glow is enabled, the scene renders to an offscreen texture
+    /// instead of directly to the screen. The glow compositing happens
+    /// in end() when the RenderContext is finalized.
     pub fn beginRender(self: *App) RenderContext {
-        rl.beginDrawing();
-        rl.clearBackground(self.config.background_color);
+        if (self.config.glow and self.glow_target != null and self.glow_blur != null) {
+            // Render into the offscreen glow target
+            render.beginGlowFrame(self.glow_target.?, self.glow_blur.?, self.config.background_color);
+            rl.beginTextureMode(self.glow_target.?);
+            rl.clearBackground(self.config.background_color);
+        } else {
+            rl.beginDrawing();
+            rl.clearBackground(self.config.background_color);
+        }
 
         const camera = rl.Camera2D{
             .offset = self.screen.offset,

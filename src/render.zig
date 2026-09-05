@@ -28,6 +28,151 @@ pub fn setRenderScale(s: f32) void {
     current_render_scale = s;
 }
 
+// ── Glow post-processing state ─────────────────────────────────────
+// When glow is active, App.beginRender renders the scene into an offscreen
+// RenderTexture instead of directly to the screen. When RenderContext.end()
+// is called, it ends texture mode and calls compositeGlow() to draw the
+// scene texture to the screen with additive blurred copies for the bloom.
+
+var glow_active: bool = false;
+var glow_scene: ?rl.RenderTexture2D = null;
+var glow_blur: ?rl.RenderTexture2D = null;
+var glow_bg_color: rl.Color = rl.Color.black;
+
+/// Called by App.beginRender to activate glow mode for this frame.
+pub fn beginGlowFrame(scene: rl.RenderTexture2D, blur: rl.RenderTexture2D, bg: rl.Color) void {
+    glow_active = true;
+    glow_scene = scene;
+    glow_blur = blur;
+    glow_bg_color = bg;
+}
+
+/// Composite the offscreen scene texture onto the screen with a glow/bloom
+/// effect. Draws the sharp scene first, then several additive blended
+/// copies at increasing scales with decreasing alpha to simulate bloom.
+fn compositeGlow() void {
+    glow_active = false;
+    const scene = glow_scene orelse {
+        rl.endDrawing();
+        return;
+    };
+    const blur = glow_blur orelse {
+        rl.endDrawing();
+        return;
+    };
+
+    const sw = rl.getScreenWidth();
+    const sh = rl.getScreenHeight();
+    const tw: f32 = @floatFromInt(scene.texture.width);
+    const th: f32 = @floatFromInt(scene.texture.height);
+
+    // Source rect — flip Y because render textures are upside down in raylib
+    const src = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = tw,
+        .height = -th,
+    };
+    const dest = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(sw),
+        .height = @floatFromInt(sh),
+    };
+    const origin = Vector2{ .x = 0, .y = 0 };
+
+    // Step 1: Build a blurred bright-pass into the blur texture.
+    // Draw the scene to the blur texture at reduced scale (downsample),
+    // which naturally blurs it via bilinear filtering.
+    rl.beginTextureMode(blur);
+    rl.clearBackground(rl.Color{ .r = 0, .g = 0, .b = 0, .a = 0 });
+    // Downsample to half size, then it'll be upsampled back — cheap blur
+    const half_src = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = tw,
+        .height = -th,
+    };
+    const blur_dest = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(blur.texture.width),
+        .height = @floatFromInt(blur.texture.height),
+    };
+    // Draw scene scaled down with additive blend to capture only bright areas
+    rl.beginBlendMode(.additive);
+    rl.drawTexturePro(scene.texture, half_src, blur_dest, origin, 0, rl.Color{
+        .r = 255,
+        .g = 255,
+        .b = 255,
+        .a = 80,
+    });
+    rl.endBlendMode();
+    rl.endTextureMode();
+
+    // Step 2: Draw to the actual screen
+    rl.beginDrawing();
+    rl.clearBackground(glow_bg_color);
+
+    // Draw the sharp scene
+    rl.drawTexturePro(scene.texture, src, dest, origin, 0, rl.Color.white);
+
+    // Draw the blurred bright-pass on top with additive blending for glow
+    const blur_src = rl.Rectangle{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(blur.texture.width),
+        .height = -@as(f32, @floatFromInt(blur.texture.height)),
+    };
+
+    // Multiple passes at slightly different scales for a wider glow
+    rl.beginBlendMode(.additive);
+
+    // Pass 1: tight glow (1.0x scale of the blur)
+    rl.drawTexturePro(blur.texture, blur_src, dest, origin, 0, rl.Color{
+        .r = 255,
+        .g = 255,
+        .b = 255,
+        .a = 100,
+    });
+
+    // Pass 2: wider glow (scaled up slightly)
+    const dest2 = rl.Rectangle{
+        .x = -@as(f32, @floatFromInt(sw)) * 0.02,
+        .y = -@as(f32, @floatFromInt(sh)) * 0.02,
+        .width = @as(f32, @floatFromInt(sw)) * 1.04,
+        .height = @as(f32, @floatFromInt(sh)) * 1.04,
+    };
+    rl.drawTexturePro(blur.texture, blur_src, dest2, origin, 0, rl.Color{
+        .r = 255,
+        .g = 255,
+        .b = 255,
+        .a = 60,
+    });
+
+    // Pass 3: widest glow (scaled up more)
+    const dest3 = rl.Rectangle{
+        .x = -@as(f32, @floatFromInt(sw)) * 0.04,
+        .y = -@as(f32, @floatFromInt(sh)) * 0.04,
+        .width = @as(f32, @floatFromInt(sw)) * 1.08,
+        .height = @as(f32, @floatFromInt(sh)) * 1.08,
+    };
+    rl.drawTexturePro(blur.texture, blur_src, dest3, origin, 0, rl.Color{
+        .r = 255,
+        .g = 255,
+        .b = 255,
+        .a = 40,
+    });
+
+    rl.endBlendMode();
+
+    rl.endDrawing();
+
+    // Clear references
+    glow_scene = null;
+    glow_blur = null;
+}
+
 pub const RenderContext = struct {
     screen: *Screen,
     camera: rl.Camera2D,
@@ -38,11 +183,22 @@ pub const RenderContext = struct {
 
     /// End rendering — calls camera.end() and rl.endDrawing().
     /// Normally called via `defer ctx.end()`.
+    /// When the App has glow enabled, this composites the offscreen
+    /// render texture onto the screen with additive blurred copies
+    /// to produce the bloom/glow effect.
     pub fn end(self: *RenderContext) void {
         if (self.ended) return;
         self.ended = true;
         self.camera.end();
-        rl.endDrawing();
+
+        if (glow_active) {
+            // End rendering into the offscreen texture, then composite
+            // the glow/bloom effect onto the actual screen.
+            rl.endTextureMode();
+            compositeGlow();
+        } else {
+            rl.endDrawing();
+        }
     }
 
     /// Draw connected line segments with transformation (translate, scale, rotate).
