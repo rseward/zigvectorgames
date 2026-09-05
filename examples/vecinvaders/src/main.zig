@@ -158,6 +158,37 @@ const PLAYER_SHAPE = [_]Vector2{
     .{ .x = 0.0, .y = -0.4 },  // close back to tip
 };
 
+// ── Precomputed polygon areas (normalized, for explosion fragment counts) ──
+// The screen-space pixel area of a shape is:
+//   normalized_area * entity_scale^2 * render_scale^2
+// The number of 4-pixel explosion fragments is that / 4.
+
+/// Shoelace formula for polygon area from a list of 2D points.
+fn shoelaceArea(points: []const Vector2) f32 {
+    var area: f32 = 0;
+    for (0..points.len) |i| {
+        const j = (i + 1) % points.len;
+        area += points[i].x * points[j].y;
+        area -= points[j].x * points[i].y;
+    }
+    return @abs(area) / 2.0;
+}
+
+// Precompute at comptime — alien area includes body + both eyes
+const ALIEN_AREA_A: f32 = blk: {
+    const body = shoelaceArea(&ALIEN_SHAPE_A);
+    const eye_l = shoelaceArea(&ALIEN_EYE_L_A);
+    const eye_r = shoelaceArea(&ALIEN_EYE_R_A);
+    break :blk body + eye_l + eye_r;
+};
+const ALIEN_AREA_B: f32 = blk: {
+    const body = shoelaceArea(&ALIEN_SHAPE_B);
+    const eye_l = shoelaceArea(&ALIEN_EYE_L_B);
+    const eye_r = shoelaceArea(&ALIEN_EYE_R_B);
+    break :blk body + eye_l + eye_r;
+};
+const PLAYER_AREA: f32 = shoelaceArea(&PLAYER_SHAPE);
+
 // ── Spawning ────────────────────────────────────────────────────
 
 fn spawnAliens(aliens: *std.ArrayList(Alien), alloc: std.mem.Allocator, field_w: f32) !struct { spacing: f32, grid_x: f32 } {
@@ -384,9 +415,18 @@ fn mainImpl() !void {
                                 b.remove = true;
                                 score += 100;
                                 alive_count -= 1;
-                                try particles.spawnDots(a.pos, 10, .{
+                                // Explosion fragments: 4-pixel squares totaling
+                                // the invader's screen pixel area
+                                const es = alien_spacing * 0.5;
+                                const norm_area = if (a.shape_state == 0) ALIEN_AREA_A else ALIEN_AREA_B;
+                                const screen_pixels: usize = @intFromFloat(
+                                    norm_area * es * es * app.screen.render_scale * app.screen.render_scale,
+                                );
+                                try particles.spawnSquares(a.pos, screen_pixels, .{
                                     .color = vgame.Color.green,
                                     .scale = app.screen.scale,
+                                    .speed = 3.0,
+                                    .ttl = 2.0,
                                 }, &rand);
                             }
                         }
@@ -397,9 +437,17 @@ fn mainImpl() !void {
                             b.remove = true;
                             player.lives -= 1;
                             if (have_audio) app.audio.?.play(0); // explosion
-                            try particles.spawnDots(player.pos, 15, .{
+                            // Explosion fragments: 4-pixel squares totaling
+                            // the player ship's screen pixel area
+                            const es = alien_spacing * 0.5;
+                            const screen_pixels: usize = @intFromFloat(
+                                PLAYER_AREA * es * es * app.screen.render_scale * app.screen.render_scale,
+                            );
+                            try particles.spawnSquares(player.pos, screen_pixels, .{
                                 .color = vgame.Color.red,
                                 .scale = app.screen.scale,
+                                .speed = 3.0,
+                                .ttl = 2.5,
                             }, &rand);
                             if (player.lives == 0) game_over = true;
                         }

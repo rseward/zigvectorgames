@@ -10,7 +10,7 @@ const Vector2 = rl.Vector2;
 const math = std.math;
 const render_mod = @import("render.zig");
 
-const ParticleType = enum { LINE, DOT };
+const ParticleType = enum { LINE, DOT, SQUARE };
 
 const Particle = struct {
     pos: Vector2,
@@ -20,6 +20,7 @@ const Particle = struct {
     values: union(ParticleType) {
         LINE: struct { rot: f32, length: f32 },
         DOT: struct { radius: f32 },
+        SQUARE: struct { size: f32, rot: f32, rot_speed: f32 },
     },
 };
 
@@ -88,6 +89,47 @@ pub const Particles = struct {
         }
     }
 
+    /// Spawn square fragment particles from an explosion.
+    /// `total_pixels` is the screen-space pixel area of the object being
+    /// destroyed.  Each fragment is a 4-pixel square (2x2), so the number
+    /// of fragments = total_pixels / 4.  Fragments fly outward with
+    /// random velocities and spin, then fade.
+    pub fn spawnSquares(
+        self: *Particles,
+        pos: Vector2,
+        total_pixels: usize,
+        config: ParticleConfig,
+        rand: *std.Random,
+    ) !void {
+        const fragment_pixel_area: usize = 4; // 2x2 pixels per fragment
+        const count = total_pixels / fragment_pixel_area;
+        // Cap to avoid pathological counts from very large shapes
+        const capped = @min(count, 200);
+        const frag_size: f32 = 2.0; // 2x2 pixel square
+
+        for (0..capped) |_| {
+            const angle = math.tau * rand.float(f32);
+            const speed = config.speed * (0.5 + 1.5 * rand.float(f32));
+            try self.items.append(self.allocator, .{
+                .pos = rlm.vector2Add(pos, .{
+                    .x = (rand.float(f32) - 0.5) * config.scale * 0.5,
+                    .y = (rand.float(f32) - 0.5) * config.scale * 0.5,
+                }),
+                .vel = rlm.vector2Scale(
+                    .{ .x = math.cos(angle), .y = math.sin(angle) },
+                    speed,
+                ),
+                .ttl = config.ttl * (0.5 + rand.float(f32)),
+                .color = config.color,
+                .values = .{ .SQUARE = .{
+                    .size = frag_size,
+                    .rot = math.tau * rand.float(f32),
+                    .rot_speed = (rand.float(f32) - 0.5) * 10.0,
+                } },
+            });
+        }
+    }
+
     /// Update all particles: move, wrap, decay TTL, remove dead.
     pub fn update(self: *Particles, dt: f32, field_size: Vector2) void {
         var i: usize = 0;
@@ -98,6 +140,11 @@ pub const Particles = struct {
                 .x = @mod(p.pos.x, field_size.x),
                 .y = @mod(p.pos.y, field_size.y),
             };
+            // Spin square fragments
+            switch (p.values) {
+                .SQUARE => |*sq| sq.rot += sq.rot_speed * dt,
+                else => {},
+            }
             if (p.ttl > dt) {
                 p.ttl -= dt;
                 i += 1;
@@ -110,16 +157,48 @@ pub const Particles = struct {
     /// Render all particles using vector drawing primitives.
     pub fn render(self: *const Particles) void {
         for (self.items.items) |p| {
+            // Fade out as TTL decreases (simple alpha based on TTL)
+            const alpha: u8 = if (p.ttl < 1.0)
+                @intFromFloat(@max(0.0, @min(255.0, p.ttl * 255.0)))
+            else
+                255;
+            const fade_color = rl.Color{
+                .r = p.color.r,
+                .g = p.color.g,
+                .b = p.color.b,
+                .a = alpha,
+            };
             switch (p.values) {
                 .LINE => |line| {
                     const points = [_]Vector2{
                         .{ .x = -0.5, .y = 0 },
                         .{ .x = 0.5, .y = 0 },
                     };
-                    render_mod.drawLinesRaw(p.pos, line.length, line.rot, &points, true, p.color);
+                    render_mod.drawLinesRaw(p.pos, line.length, line.rot, &points, true, fade_color);
                 },
                 .DOT => |dot| {
-                    rl.drawCircleV(p.pos, dot.radius, p.color);
+                    rl.drawCircleV(p.pos, dot.radius, fade_color);
+                },
+                .SQUARE => |sq| {
+                    // Draw a filled square centered at pos, rotated by sq.rot
+                    const half = sq.size / 2.0;
+                    const cos_r = math.cos(sq.rot);
+                    const sin_r = math.sin(sq.rot);
+                    const corners = [_]Vector2{
+                        .{ .x = (-half) * cos_r - (-half) * sin_r, .y = (-half) * sin_r + (-half) * cos_r },
+                        .{ .x = half * cos_r - (-half) * sin_r, .y = half * sin_r + (-half) * cos_r },
+                        .{ .x = half * cos_r - half * sin_r, .y = half * sin_r + half * cos_r },
+                        .{ .x = (-half) * cos_r - half * sin_r, .y = (-half) * sin_r + half * cos_r },
+                    };
+                    const screen_pts = [_]Vector2{
+                        .{ .x = p.pos.x + corners[0].x, .y = p.pos.y + corners[0].y },
+                        .{ .x = p.pos.x + corners[1].x, .y = p.pos.y + corners[1].y },
+                        .{ .x = p.pos.x + corners[2].x, .y = p.pos.y + corners[2].y },
+                        .{ .x = p.pos.x + corners[3].x, .y = p.pos.y + corners[3].y },
+                    };
+                    // Draw as a filled triangle fan (two triangles)
+                    rl.drawTriangle(screen_pts[0], screen_pts[1], screen_pts[2], fade_color);
+                    rl.drawTriangle(screen_pts[0], screen_pts[2], screen_pts[3], fade_color);
                 },
             }
         }
