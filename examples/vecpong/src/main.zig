@@ -45,7 +45,13 @@ const Mode = enum { title, vs_computer, two_player };
 
 const GameMode = enum { title, playing, paused, game_over };
 
-pub fn main() !void {
+pub fn main() void {
+    mainImpl() catch |err| {
+        std.log.err("game error: {}", .{err});
+    };
+}
+
+fn mainImpl() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();

@@ -191,7 +191,13 @@ fn spawnBunkers(bunkers: *[BUNKER_COUNT]Bunker, field_w: f32, field_h: f32) void
     }
 }
 
-pub fn main() !void {
+pub fn main() void {
+    mainImpl() catch |err| {
+        std.log.err("game error: {}", .{err});
+    };
+}
+
+fn mainImpl() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();

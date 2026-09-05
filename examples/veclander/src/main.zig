@@ -108,7 +108,13 @@ fn generateTerrain(allocator: std.mem.Allocator, rand: *std.Random, width: f32) 
     };
 }
 
-pub fn main() !void {
+pub fn main() void {
+    mainImpl() catch |err| {
+        std.log.err("game error: {}", .{err});
+    };
+}
+
+fn mainImpl() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     defer _ = gpa.deinit();
