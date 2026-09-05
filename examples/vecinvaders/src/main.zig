@@ -10,6 +10,14 @@
 // The shape alternates each time the squadron advances a step.
 // All invaders in the same column share the same shape state.
 //
+// Alien shooting: one bullet per column at a time. Fire rate doubles
+// each wave. Columns near the player are more likely to fire (weighted
+// by inverse distance). The lowest alien in a column fires.
+//
+// Bullets are vector-drawn rods — a short line segment in the direction
+// of travel. Player rods are white (20px, upward), alien rods are red
+// (16px, downward).
+//
 // Four vector bunkers sit between the player and the aliens. Both player
 // and alien bullets damage bunkers cell-by-cell.
 //
@@ -43,6 +51,9 @@ const Bullet = struct {
     pos: Vector2,
     vel: Vector2,
     from_player: bool,
+    /// Which alien column this bullet came from (0..COLS-1).
+    /// -1 (or any value >= COLS) for player bullets.
+    column: i32 = -1,
     remove: bool = false,
 };
 
@@ -370,22 +381,103 @@ fn mainImpl() !void {
                 }
             }
 
-            // Alien shooting (random interval, more frequent as aliens thin out)
+            // Alien shooting — one bullet per column at a time, fire rate
+            // doubles each wave, columns near the player are more likely.
             alien_shoot_timer += dt;
-            const shoot_interval = 1.0 + rand.float(f32) * 2.0 * @as(f32, @floatFromInt(alive_count)) / @as(f32, @floatFromInt(TOTAL_ALIENS));
+            // Base interval scales with how many aliens are alive (fewer = more
+            // frequent), and each wave halves the interval (doubles fire rate).
+            const base_interval = 1.2 + rand.float(f32) * 0.8;
+            const alive_ratio = @as(f32, @floatFromInt(alive_count)) / @as(f32, @floatFromInt(TOTAL_ALIENS));
+            const wave_fire_factor = std.math.pow(f32, 0.5, @as(f32, @floatFromInt(wave - 1)));
+            const shoot_interval = base_interval * alive_ratio * wave_fire_factor;
             if (alien_shoot_timer > shoot_interval) {
                 alien_shoot_timer = 0;
-                var alive_list = std.ArrayList(usize).empty;
-                defer alive_list.deinit(allocator);
-                for (aliens.items, 0..) |a, i| if (a.alive) try alive_list.append(allocator, i);
-                if (alive_list.items.len > 0) {
-                    const idx = alive_list.items[rand.intRangeLessThan(usize, 0, alive_list.items.len)];
-                    try bullets.append(allocator, .{
-                        .pos = aliens.items[idx].pos,
-                        .vel = .{ .x = 0, .y = 350 },
-                        .from_player = false,
-                    });
-                    if (have_audio) app.audio.?.play(2); // alien laser
+
+                // Build list of columns that have at least one alive alien
+                // and no active alien bullet in that column.
+                var candidate_cols: [COLS]bool = .{false} ** COLS;
+                for (0..COLS) |c| candidate_cols[c] = false;
+                for (aliens.items, 0..) |a, idx| {
+                    if (!a.alive) continue;
+                    const col = idx % COLS;
+                    // Check if there's already an alien bullet in this column
+                    var col_has_bullet = false;
+                    for (bullets.items) |b| {
+                        if (!b.from_player and !b.remove and b.column == @as(i32, @intCast(col))) {
+                            col_has_bullet = true;
+                            break;
+                        }
+                    }
+                    if (!col_has_bullet) candidate_cols[col] = true;
+                }
+
+                // Collect candidate columns with weights — columns near the
+                // player's x position get higher weight.
+                var weights: [COLS]f32 = .{0} ** COLS;
+                var total_weight: f32 = 0;
+                for (0..COLS) |c| {
+                    if (!candidate_cols[c]) continue;
+                    // Find the x position of this column's aliens
+                    var col_x: f32 = 0;
+                    var found = false;
+                    for (aliens.items, 0..) |a, idx| {
+                        if (a.alive and idx % COLS == c) {
+                            col_x = a.pos.x;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) continue;
+                    // Weight inversely proportional to distance from player.
+                    // Near columns get ~3x the weight of far columns.
+                    const dist = @abs(col_x - player.pos.x);
+                    const w = 1.0 / (1.0 + dist / 200.0);
+                    weights[c] = w;
+                    total_weight += w;
+                }
+
+                if (total_weight > 0) {
+                    // Weighted random selection
+                    const r = rand.float(f32) * total_weight;
+                    var cumulative: f32 = 0;
+                    var chosen_col: ?usize = null;
+                    for (0..COLS) |c| {
+                        cumulative += weights[c];
+                        if (r <= cumulative and weights[c] > 0) {
+                            chosen_col = c;
+                            break;
+                        }
+                    }
+                    if (chosen_col == null) {
+                        // Fallback: first available column
+                        for (0..COLS) |c| {
+                            if (candidate_cols[c]) {
+                                chosen_col = c;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (chosen_col) |cc| {
+                        // Pick the lowest alive alien in this column (closest to player)
+                        var shooter_idx: ?usize = null;
+                        var lowest_y: f32 = -1;
+                        for (aliens.items, 0..) |a, idx| {
+                            if (a.alive and idx % COLS == cc and a.pos.y > lowest_y) {
+                                lowest_y = a.pos.y;
+                                shooter_idx = idx;
+                            }
+                        }
+                        if (shooter_idx) |si| {
+                            try bullets.append(allocator, .{
+                                .pos = aliens.items[si].pos,
+                                .vel = .{ .x = 0, .y = 350 },
+                                .from_player = false,
+                                .column = @intCast(cc),
+                            });
+                            if (have_audio) app.audio.?.play(2); // alien laser
+                        }
+                    }
                 }
             }
 
@@ -397,10 +489,15 @@ fn mainImpl() !void {
                 b.pos.y += b.vel.y * dt;
                 if (b.pos.y < 0 or b.pos.y > fs.y) b.remove = true;
 
-                // Bunker collision
+                // Bunker collision (check rod tip)
                 if (!b.remove) {
+                    const tip_offset: f32 = if (b.from_player) -20.0 else 16.0;
+                    const tip: Vector2 = .{
+                        .x = b.pos.x,
+                        .y = b.pos.y + tip_offset,
+                    };
                     for (&bunkers) |*bk| {
-                        if (bk.hitTest(b.pos, 5)) {
+                        if (bk.hitTest(tip, 5)) {
                             b.remove = true;
                             break;
                         }
@@ -408,11 +505,16 @@ fn mainImpl() !void {
                 }
 
                 if (!b.remove) {
+                    const tip_offset2: f32 = if (b.from_player) -20.0 else 16.0;
+                    const tip: Vector2 = .{
+                        .x = b.pos.x,
+                        .y = b.pos.y + tip_offset2,
+                    };
                     if (b.from_player) {
                         // Tight hit box — player must aim near the invader's center
                         const alien_radius = alien_spacing * 0.2;
                         for (aliens.items) |*a| {
-                            if (a.alive and vgame.circleCollision(b.pos, 5, a.pos, alien_radius)) {
+                            if (a.alive and vgame.circleCollision(tip, 5, a.pos, alien_radius)) {
                                 a.alive = false;
                                 b.remove = true;
                                 score += 100;
@@ -435,7 +537,7 @@ fn mainImpl() !void {
                     } else {
                         // Tight hit box on player too — matches alien hit difficulty
                         const player_radius = alien_spacing * 0.2;
-                        if (vgame.circleCollision(b.pos, 5, player.pos, player_radius)) {
+                        if (vgame.circleCollision(tip, 5, player.pos, player_radius)) {
                             b.remove = true;
                             player.lives -= 1;
                             if (have_audio) app.audio.?.play(0); // explosion
@@ -541,10 +643,17 @@ fn mainImpl() !void {
         // Player (same scale as aliens)
         ctx.drawLines(player.pos, entity_scale, 0, &PLAYER_SHAPE, true, vgame.Color.white);
 
-        // Bullets
+        // Bullets — vector-drawn rods
         for (bullets.items) |b| {
             const c: vgame.Color = if (b.from_player) vgame.Color.white else vgame.Color.red;
-            ctx.drawCircle(b.pos, 4, c);
+            // Rod: a short vertical line segment in the direction of travel
+            const rod_len: f32 = if (b.from_player) 20.0 else 16.0;
+            const dir: f32 = if (b.from_player) -1.0 else 1.0;
+            const rod_pts = [_]Vector2{
+                .{ .x = 0, .y = 0 },
+                .{ .x = 0, .y = dir * rod_len },
+            };
+            ctx.drawLines(b.pos, 1.0, 0, &rod_pts, false, c);
         }
 
         // Particles
