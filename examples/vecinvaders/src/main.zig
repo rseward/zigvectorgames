@@ -15,6 +15,12 @@
 //
 // Player ship points UP (toward the invaders at the top of the screen)
 // and is approximately the same size as an invader.
+//
+// Sound effects (generated WAV files in resources/):
+//   - Player laser: pitch-decreasing square wave sweep
+//   - Alien laser:  pitch-increasing square wave sweep
+//   - Explosion:    filtered noise burst with exponential decay
+//   - March clicks: 4 ascending tones that cycle on each alien step
 
 const std = @import("std");
 const vgame = @import("vgame");
@@ -197,6 +203,25 @@ pub fn main() !void {
     });
     defer app.deinit();
 
+    // Audio — sound clips loaded by index:
+    //   0: explosion     1: player_laser    2: alien_laser
+    //   3: march1 (low)  4: march2          5: march3         6: march4 (high)
+    app.initAudio(.{
+        .clips = &.{
+            "explosion.wav",
+            "player_laser.wav",
+            "alien_laser.wav",
+            "march1.wav",
+            "march2.wav",
+            "march3.wav",
+            "march4.wav",
+        },
+        .resource_dir = "resources",
+    }) catch |err| {
+        std.log.warn("Audio init failed (game will be silent): {}", .{err});
+    };
+    const have_audio = app.audio != null;
+
     var prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
     var rand = prng.random();
 
@@ -224,6 +249,7 @@ pub fn main() !void {
     // Each step toggles the shape state and moves the squadron horizontally.
     var step_timer: f32 = 0;
     var step_interval: f32 = 0.5; // seconds between steps (updated by alive count)
+    var march_step: u32 = 0; // cycles 0-3 for the four marching tones
 
     // Initial spawn
     {
@@ -259,6 +285,7 @@ pub fn main() !void {
                         .vel = .{ .x = 0, .y = -700 },
                         .from_player = true,
                     });
+                    if (have_audio) app.audio.?.play(1); // player laser
                 }
             }
 
@@ -272,6 +299,10 @@ pub fn main() !void {
             step_timer += dt;
             if (step_timer >= step_interval) {
                 step_timer = 0;
+
+                // Marching click — cycles through 4 ascending tones
+                if (have_audio) app.audio.?.play(3 + march_step);
+                march_step = (march_step + 1) % 4;
 
                 // Toggle shape state for all aliens (advance animation)
                 for (aliens.items) |*a| {
@@ -315,6 +346,7 @@ pub fn main() !void {
                         .vel = .{ .x = 0, .y = 350 },
                         .from_player = false,
                     });
+                    if (have_audio) app.audio.?.play(2); // alien laser
                 }
             }
 
@@ -358,6 +390,7 @@ pub fn main() !void {
                         if (vgame.circleCollision(b.pos, 5, player.pos, player_radius)) {
                             b.remove = true;
                             player.lives -= 1;
+                            if (have_audio) app.audio.?.play(0); // explosion
                             try particles.spawnDots(player.pos, 15, .{
                                 .color = vgame.Color.red,
                                 .scale = app.screen.scale,
