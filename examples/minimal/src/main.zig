@@ -25,6 +25,8 @@ fn mainImpl() !void {
         .title = "vgame minimal",
         .design_size = .{ .x = 1280, .y = 960 },
         .base_scale = 38.0,
+        .glow = true,
+        .msaa = true,
     });
     defer app.deinit();
 

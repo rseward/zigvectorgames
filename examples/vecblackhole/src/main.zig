@@ -626,6 +626,8 @@ fn mainImpl() !void {
         .title = "VecBlackhole",
         .design_size = .{ .x = DESIGN_W, .y = DESIGN_H },
         .base_scale = 38.0,
+        .glow = true,
+        .msaa = true,
     });
     defer app.deinit();
 
