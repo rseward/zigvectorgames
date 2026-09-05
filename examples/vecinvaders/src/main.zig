@@ -98,29 +98,48 @@ const Bunker = struct {
 };
 
 // ── Vector shapes ───────────────────────────────────────────────
+// Invader shapes derived from examples/design/invader1.svg (jaws closed)
+// and invader2.svg (jaws open). Coordinates converted from the SVG
+// viewBox (100x95) to normalized game space centered at (0,0).
+// The head is slightly wider than the original polygon shapes to give
+// a fatter appearance while keeping the same height ratio.
 
-// Invader shape A: jaws closed (antennae inward)
+// Invader shape A: jaws closed (antennae inward) — from invader1.svg
 const ALIEN_SHAPE_A = [_]Vector2{
-    // Body
-    .{ .x = -0.4, .y = -0.3 }, .{ .x = -0.2, .y = 0.3 },
-    .{ .x = 0.2, .y = 0.3 }, .{ .x = 0.4, .y = -0.3 },
-    .{ .x = 0.2, .y = -0.1 }, .{ .x = -0.2, .y = -0.1 },
-    .{ .x = -0.4, .y = -0.3 },
-    // Antennae (closed — pointing inward)
-    .{ .x = -0.3, .y = -0.3 }, .{ .x = -0.15, .y = -0.5 },
-    .{ .x = 0.15, .y = -0.5 }, .{ .x = 0.3, .y = -0.3 },
+    .{ .x = 0, .y = -0.375 }, .{ .x = -0.114, .y = -0.287 }, .{ .x = -0.186, .y = -0.4 }, .{ .x = -0.457, .y = -0.2 },
+    .{ .x = -0.4, .y = -0.15 }, .{ .x = -0.186, .y = -0.287 }, .{ .x = -0.214, .y = -0.1 }, .{ .x = -0.214, .y = 0.1 },
+    .{ .x = -0.143, .y = 0.25 }, .{ .x = -0.214, .y = 0.275 }, .{ .x = -0.171, .y = 0.4 }, .{ .x = 0, .y = 0.312 },
+    .{ .x = 0.171, .y = 0.4 }, .{ .x = 0.214, .y = 0.275 }, .{ .x = 0.143, .y = 0.25 }, .{ .x = 0.214, .y = 0.1 },
+    .{ .x = 0.214, .y = -0.1 }, .{ .x = 0.186, .y = -0.287 }, .{ .x = 0.4, .y = -0.15 }, .{ .x = 0.457, .y = -0.2 },
+    .{ .x = 0.186, .y = -0.4 }, .{ .x = 0.114, .y = -0.287 },
 };
 
-// Invader shape B: jaws open (antennae outward)
+// Invader shape B: jaws open (antennae outward) — from invader2.svg
 const ALIEN_SHAPE_B = [_]Vector2{
-    // Body
-    .{ .x = -0.4, .y = -0.3 }, .{ .x = -0.2, .y = 0.3 },
-    .{ .x = 0.2, .y = 0.3 }, .{ .x = 0.4, .y = -0.3 },
-    .{ .x = 0.2, .y = -0.1 }, .{ .x = -0.2, .y = -0.1 },
-    .{ .x = -0.4, .y = -0.3 },
-    // Antennae (open — pointing outward)
-    .{ .x = -0.3, .y = -0.3 }, .{ .x = -0.45, .y = -0.5 },
-    .{ .x = 0.45, .y = -0.5 }, .{ .x = 0.3, .y = -0.3 },
+    .{ .x = 0, .y = -0.35 }, .{ .x = -0.114, .y = -0.287 }, .{ .x = -0.186, .y = -0.362 }, .{ .x = -0.5, .y = -0.15 },
+    .{ .x = -0.443, .y = -0.1 }, .{ .x = -0.214, .y = -0.263 }, .{ .x = -0.214, .y = -0.1 }, .{ .x = -0.214, .y = 0.1 },
+    .{ .x = -0.143, .y = 0.25 }, .{ .x = -0.257, .y = 0.3 }, .{ .x = -0.229, .y = 0.45 }, .{ .x = 0, .y = 0.312 },
+    .{ .x = 0.229, .y = 0.45 }, .{ .x = 0.257, .y = 0.3 }, .{ .x = 0.143, .y = 0.25 }, .{ .x = 0.214, .y = 0.1 },
+    .{ .x = 0.214, .y = -0.1 }, .{ .x = 0.214, .y = -0.263 }, .{ .x = 0.443, .y = -0.1 }, .{ .x = 0.5, .y = -0.15 },
+    .{ .x = 0.186, .y = -0.362 }, .{ .x = 0.114, .y = -0.287 },
+};
+
+// Eyes — small quadrilateral polygons from the SVGs, drawn as closed polylines
+const ALIEN_EYE_L_A = [_]Vector2{
+    .{ .x = -0.171, .y = -0.225 }, .{ .x = -0.043, .y = -0.175 },
+    .{ .x = -0.1, .y = -0.087 }, .{ .x = -0.2, .y = -0.138 },
+};
+const ALIEN_EYE_R_A = [_]Vector2{
+    .{ .x = 0.171, .y = -0.225 }, .{ .x = 0.043, .y = -0.175 },
+    .{ .x = 0.1, .y = -0.087 }, .{ .x = 0.2, .y = -0.138 },
+};
+const ALIEN_EYE_L_B = [_]Vector2{
+    .{ .x = -0.171, .y = -0.212 }, .{ .x = -0.043, .y = -0.163 },
+    .{ .x = -0.1, .y = -0.075 }, .{ .x = -0.2, .y = -0.125 },
+};
+const ALIEN_EYE_R_B = [_]Vector2{
+    .{ .x = 0.171, .y = -0.212 }, .{ .x = 0.043, .y = -0.163 },
+    .{ .x = 0.1, .y = -0.075 }, .{ .x = 0.2, .y = -0.125 },
 };
 
 // Player ship points UP, same size as an invader.
@@ -411,11 +430,18 @@ pub fn main() !void {
         // Player and aliens are the same size
         const entity_scale = alien_spacing * 0.5;
 
-        // Aliens — alternating shapes per column
+        // Aliens — alternating shapes per column, with eyes
         for (aliens.items) |a| {
             if (!a.alive) continue;
-            const shape = if (a.shape_state == 0) &ALIEN_SHAPE_A else &ALIEN_SHAPE_B;
-            ctx.drawLines(a.pos, entity_scale, 0, shape, true, vgame.Color.green);
+            if (a.shape_state == 0) {
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_SHAPE_A, true, vgame.Color.green);
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_EYE_L_A, true, vgame.Color.green);
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_EYE_R_A, true, vgame.Color.green);
+            } else {
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_SHAPE_B, true, vgame.Color.green);
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_EYE_L_B, true, vgame.Color.green);
+                ctx.drawLines(a.pos, entity_scale, 0, &ALIEN_EYE_R_B, true, vgame.Color.green);
+            }
         }
 
         // Bunkers
