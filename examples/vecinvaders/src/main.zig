@@ -425,7 +425,7 @@ fn mainImpl() !void {
                                 try particles.spawnSquares(a.pos, screen_pixels, .{
                                     .color = vgame.Color.green,
                                     .scale = app.screen.scale,
-                                    .speed = 3.0,
+                                    .speed = 250.0,
                                     .ttl = 2.0,
                                 }, &rand);
                             }
@@ -446,7 +446,7 @@ fn mainImpl() !void {
                             try particles.spawnSquares(player.pos, screen_pixels, .{
                                 .color = vgame.Color.red,
                                 .scale = app.screen.scale,
-                                .speed = 3.0,
+                                .speed = 250.0,
                                 .ttl = 2.5,
                             }, &rand);
                             if (player.lives == 0) game_over = true;

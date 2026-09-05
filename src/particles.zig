@@ -94,6 +94,8 @@ pub const Particles = struct {
     /// destroyed.  Each fragment is a 4-pixel square (2x2), so the number
     /// of fragments = total_pixels / 4.  Fragments fly outward with
     /// random velocities and spin, then fade.
+    /// `frag_size` is the side length in design-space units (not screen
+    /// pixels) so fragments are visible at any render scale.
     pub fn spawnSquares(
         self: *Particles,
         pos: Vector2,
@@ -105,7 +107,13 @@ pub const Particles = struct {
         const count = total_pixels / fragment_pixel_area;
         // Cap to avoid pathological counts from very large shapes
         const capped = @min(count, 200);
-        const frag_size: f32 = 2.0; // 2x2 pixel square
+        // Size fragments in design-space: 4 screen pixels divided by
+        // render_scale gives design-space units.  But we don't know
+        // render_scale here, so use a fraction of config.scale instead.
+        // config.scale is the base_scale (e.g. 38.0).  A 2x2 screen pixel
+        // square at render_scale ~1.5 is about 1.3 design units.  Use
+        // config.scale * 0.08 as a reasonable visible size (~3 design units).
+        const frag_size: f32 = config.scale * 0.08;
 
         for (0..capped) |_| {
             const angle = math.tau * rand.float(f32);
@@ -135,7 +143,8 @@ pub const Particles = struct {
         var i: usize = 0;
         while (i < self.items.items.len) {
             var p = &self.items.items[i];
-            p.pos = rlm.vector2Add(p.pos, p.vel);
+            // Velocity is in design-space units per second
+            p.pos = rlm.vector2Add(p.pos, rlm.vector2Scale(p.vel, dt));
             p.pos = .{
                 .x = @mod(p.pos.x, field_size.x),
                 .y = @mod(p.pos.y, field_size.y),
@@ -180,25 +189,22 @@ pub const Particles = struct {
                     rl.drawCircleV(p.pos, dot.radius, fade_color);
                 },
                 .SQUARE => |sq| {
-                    // Draw a filled square centered at pos, rotated by sq.rot
-                    const half = sq.size / 2.0;
-                    const cos_r = math.cos(sq.rot);
-                    const sin_r = math.sin(sq.rot);
-                    const corners = [_]Vector2{
-                        .{ .x = (-half) * cos_r - (-half) * sin_r, .y = (-half) * sin_r + (-half) * cos_r },
-                        .{ .x = half * cos_r - (-half) * sin_r, .y = half * sin_r + (-half) * cos_r },
-                        .{ .x = half * cos_r - half * sin_r, .y = half * sin_r + half * cos_r },
-                        .{ .x = (-half) * cos_r - half * sin_r, .y = (-half) * sin_r + half * cos_r },
+                    // Draw a filled, rotated square using drawRectanglePro.
+                    // The rectangle is centered at p.pos with origin at its
+                    // center, rotated by sq.rot (in radians, but raylib
+                    // expects degrees for drawRectanglePro — convert).
+                    const rec = rl.Rectangle{
+                        .x = p.pos.x - sq.size / 2.0,
+                        .y = p.pos.y - sq.size / 2.0,
+                        .width = sq.size,
+                        .height = sq.size,
                     };
-                    const screen_pts = [_]Vector2{
-                        .{ .x = p.pos.x + corners[0].x, .y = p.pos.y + corners[0].y },
-                        .{ .x = p.pos.x + corners[1].x, .y = p.pos.y + corners[1].y },
-                        .{ .x = p.pos.x + corners[2].x, .y = p.pos.y + corners[2].y },
-                        .{ .x = p.pos.x + corners[3].x, .y = p.pos.y + corners[3].y },
+                    const origin = Vector2{
+                        .x = sq.size / 2.0,
+                        .y = sq.size / 2.0,
                     };
-                    // Draw as a filled triangle fan (two triangles)
-                    rl.drawTriangle(screen_pts[0], screen_pts[1], screen_pts[2], fade_color);
-                    rl.drawTriangle(screen_pts[0], screen_pts[2], screen_pts[3], fade_color);
+                    const deg = sq.rot * 180.0 / math.pi;
+                    rl.drawRectanglePro(rec, origin, deg, fade_color);
                 },
             }
         }
