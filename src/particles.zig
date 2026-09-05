@@ -104,7 +104,7 @@ pub const Particles = struct {
         rand: *std.Random,
     ) !void {
         const fragment_pixel_area: usize = 4; // 2x2 pixels per fragment
-        const count = total_pixels / fragment_pixel_area;
+        const count = total_pixels / fragment_pixel_area / 3; // 1/3 density — satisfying without overdoing it
         // Cap to avoid pathological counts from very large shapes
         const capped = @min(count, 200);
         // Size fragments in design-space: 4 screen pixels divided by
