@@ -280,26 +280,43 @@ const Game = struct {
 
     fn finishClearLines(self: *Game, rand: *std.Random) void {
         const cleared = self.dissolve_count;
-        const rows: [4]usize = self.dissolve_rows;
-        // Process bottom-up so shifts don't interfere
-        for (0..cleared) |i| {
-            const row = rows[cleared - 1 - i];
-            var r = row;
-            while (r > 0) {
-                r -= 1;
-                self.grid[r + 1] = self.grid[r];
-            }
-            self.grid[0] = @splat(null);
-        }
-        self.dissolve_count = 0;
-        self.state = .normal;
+        // Compact the grid: copy all non-completed rows from bottom to top,
+        // then fill the vacated rows at the top with empty. This avoids the
+        // stale-row-index bug that occurs when shifting rows one at a time
+        // (each shift invalidates the stored indices of rows above it).
         if (cleared > 0) {
+            // Build a set of completed row indices for O(1) lookup
+            var is_complete = [_]bool{false} ** GRID_H;
+            for (0..cleared) |i| {
+                is_complete[self.dissolve_rows[i]] = true;
+            }
+            // Compact: walk from bottom to top, keeping non-completed rows
+            var write_row: usize = GRID_H;
+            var read_row: usize = GRID_H;
+            while (read_row > 0) {
+                read_row -= 1;
+                if (!is_complete[read_row]) {
+                    write_row -= 1;
+                    if (write_row != read_row) {
+                        self.grid[write_row] = self.grid[read_row];
+                    }
+                }
+            }
+            // Fill vacated rows at the top with empty
+            while (write_row > 0) {
+                write_row -= 1;
+                self.grid[write_row] = @splat(null);
+            }
+
+            // Scoring
             const points = [_]usize{ 0, 100, 300, 500, 800 };
             self.score += points[cleared] * self.level;
             self.lines += cleared;
             self.level = 1 + self.lines / 10;
             self.drop_interval = @max(0.1, 1.0 - @as(f32, @floatFromInt(self.level - 1)) * 0.1);
         }
+        self.dissolve_count = 0;
+        self.state = .normal;
         // Now spawn the next piece — this happens after rows are cleared,
         // so the new piece sees a clean grid
         self.spawnNew(rand);
