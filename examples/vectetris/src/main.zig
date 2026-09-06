@@ -7,7 +7,8 @@
 //
 // Background music: resources/tetris.xm (XM module format, played via
 // raylib's built-in module loader). Music pauses with the game, stops
-// on game over, and restarts on new game.
+// on game over, and restarts on new game. Press M to toggle music on/off
+// — the toggle remembers the playback position and resumes from there.
 
 const std = @import("std");
 const vgame = @import("vgame");
@@ -287,6 +288,10 @@ fn mainImpl() !void {
         rl.playMusicStream(m.*);
     }
 
+    // Music mute toggle — remembers playback position to restore on unmute
+    var music_muted: bool = false;
+    var music_resume_pos: f32 = 0.0;
+
     var prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
     var rand = prng.random();
 
@@ -304,6 +309,23 @@ fn mainImpl() !void {
 
         // Update music stream every frame (required by raylib)
         if (music) |m| rl.updateMusicStream(m);
+
+        // M key toggles music mute, remembering playback position
+        if (rl.isKeyPressed(.m)) {
+            if (music) |m| {
+                if (music_muted) {
+                    // Unmute — seek to saved position and resume
+                    rl.seekMusicStream(m, music_resume_pos);
+                    rl.resumeMusicStream(m);
+                    music_muted = false;
+                } else {
+                    // Mute — save position and pause
+                    music_resume_pos = rl.getMusicTimePlayed(m);
+                    rl.pauseMusicStream(m);
+                    music_muted = true;
+                }
+            }
+        }
 
         if (!game.game_over and !game.paused) {
             if (game.state == .dissolving) {
@@ -365,7 +387,10 @@ fn mainImpl() !void {
         } else if (game.paused) {
             if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) {
                 game.paused = false;
-                if (music) |m| rl.resumeMusicStream(m);
+                // Only resume music if it wasn't user-muted
+                if (music) |m| {
+                    if (!music_muted) rl.resumeMusicStream(m);
+                }
             }
         } else if (game.game_over) {
             if (music) |m| {
@@ -373,7 +398,15 @@ fn mainImpl() !void {
             }
             if (rl.isKeyPressed(.r)) {
                 game = Game.init(&rand);
-                if (music) |m| rl.playMusicStream(m);
+                // Restart music from beginning (unless user-muted)
+                if (music) |m| {
+                    if (!music_muted) {
+                        rl.playMusicStream(m);
+                    } else {
+                        // Even if muted, restart the stream so position is fresh
+                        music_resume_pos = 0.0;
+                    }
+                }
             }
         }
 
@@ -501,6 +534,7 @@ fn mainImpl() !void {
             ctx.drawText("DOWN Soft Drop", @as(i32, @intFromFloat(ctrl_x)), 190, 20, vgame.Color.gray);
             ctx.drawText("SPACE Hard Drop", @as(i32, @intFromFloat(ctrl_x)), 215, 20, vgame.Color.gray);
             ctx.drawText("P    Pause", @as(i32, @intFromFloat(ctrl_x)), 240, 20, vgame.Color.gray);
+            ctx.drawText("M    Music on/off", @as(i32, @intFromFloat(ctrl_x)), 265, 20, vgame.Color.gray);
         }
 
         // Overlays
