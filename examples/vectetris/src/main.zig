@@ -1,9 +1,13 @@
 // VecTetris — Vector-based Tetris with colored vector-drawn tetromino pieces
 //
 // Left/Right: move. Up: rotate clockwise. Down: soft drop. Space: hard drop.
-// P: pause. R: restart after game over.
+// P: pause. R: restart after game over. M: toggle music.
 // 7 tetromino types (I, O, T, S, Z, L, J), each with a distinct color.
+// 7-bag randomizer ensures fair piece distribution.
 // Standard scoring: 1 line=100, 2=300, 3=500, 4=800. Level up every 10 lines.
+// Lock delay: 0.5s grace period when a piece can't fall. During this
+// period the player can slide the piece horizontally up to 2 squares
+// (each slide resets the timer), allowing last-second adjustments.
 //
 // Background music: resources/tetris.xm (XM module format, played via
 // raylib's built-in module loader). Music pauses with the game, stops
@@ -18,6 +22,7 @@ const GRID_W: usize = 10;
 const GRID_H: usize = 20;
 const CELL: f32 = 35.0; // pixel size of each cell
 const LOCK_DELAY_TIME: f32 = 0.5; // grace period before locking (seconds)
+const MAX_SLIDES: usize = 2; // max horizontal slides during lock delay before forced lock
 
 // Tetromino shapes — each piece defined as 4 (row, col) offsets from a pivot.
 // Rotations computed at runtime by rotating around the pivot.
@@ -115,6 +120,7 @@ const Game = struct {
     paused: bool = false,
     touching: bool = false,   // piece is resting on something below
     lock_delay: f32 = 0,     // time since piece started touching
+    slide_count: usize = 0,  // horizontal slides used during current lock delay
     state: GameState = .normal,
     dissolve_timer: f32 = 0,
     dissolve_rows: [4]usize = .{ 0, 0, 0, 0 },
@@ -176,6 +182,7 @@ const Game = struct {
         self.next = self.drawFromBag(rand);
         self.touching = false;
         self.lock_delay = 0;
+        self.slide_count = 0;
         if (!self.isValidPos(self.piece)) {
             self.game_over = true;
         }
@@ -401,6 +408,11 @@ fn mainImpl() !void {
                 // Pressing left/right moves once immediately. Holding past
                 // DAS_DELAY triggers repeating at DAS_REPEAT interval.
                 // Supports both keyboard arrows and Xbox D-pad.
+                // While touching (lock delay active), each successful
+                // horizontal move counts as a "slide" — up to MAX_SLIDES
+                // slides reset the lock delay timer, giving the player
+                // time to nudge the piece into position.
+                var did_slide: bool = false;
                 const left_down = rl.isKeyDown(.left) or rl.isGamepadButtonDown(0, .left_face_left);
                 const right_down = rl.isKeyDown(.right) or rl.isGamepadButtonDown(0, .left_face_right);
                 const left_pressed = rl.isKeyPressed(.left) or rl.isGamepadButtonPressed(0, .left_face_left);
@@ -410,11 +422,11 @@ fn mainImpl() !void {
                 if (left_pressed) {
                     das_dir = -1;
                     das_timer = 0;
-                    _ = game.tryMove(0, -1);
+                    if (game.tryMove(0, -1)) did_slide = game.touching;
                 } else if (right_pressed) {
                     das_dir = 1;
                     das_timer = 0;
-                    _ = game.tryMove(0, 1);
+                    if (game.tryMove(0, 1)) did_slide = game.touching;
                 } else if (left_down and das_dir == -1) {
                     // Holding left — advance DAS timer
                     das_timer += dt;
@@ -423,7 +435,7 @@ fn mainImpl() !void {
                         const repeat_timer = das_timer - DAS_DELAY;
                         if (repeat_timer >= DAS_REPEAT) {
                             das_timer = DAS_DELAY; // reset to delay threshold
-                            _ = game.tryMove(0, -1);
+                            if (game.tryMove(0, -1)) did_slide = game.touching;
                         }
                     }
                 } else if (right_down and das_dir == 1) {
@@ -433,7 +445,7 @@ fn mainImpl() !void {
                         const repeat_timer = das_timer - DAS_DELAY;
                         if (repeat_timer >= DAS_REPEAT) {
                             das_timer = DAS_DELAY;
-                            _ = game.tryMove(0, 1);
+                            if (game.tryMove(0, 1)) did_slide = game.touching;
                         }
                     }
                 } else if (!left_down and !right_down) {
@@ -444,12 +456,23 @@ fn mainImpl() !void {
                     // Switched from right to left
                     das_dir = -1;
                     das_timer = 0;
-                    _ = game.tryMove(0, -1);
+                    if (game.tryMove(0, -1)) did_slide = game.touching;
                 } else if (right_down and das_dir != 1) {
                     // Switched from left to right
                     das_dir = 1;
                     das_timer = 0;
-                    _ = game.tryMove(0, 1);
+                    if (game.tryMove(0, 1)) did_slide = game.touching;
+                }
+
+                // If the piece was touching and just slid horizontally,
+                // count the slide and reset the lock delay (up to MAX_SLIDES).
+                if (did_slide and game.touching) {
+                    if (game.slide_count < MAX_SLIDES) {
+                        game.slide_count += 1;
+                        game.lock_delay = 0;
+                    }
+                    // After MAX_SLIDES, the lock delay keeps counting —
+                    // no more resets, piece will lock when timer expires.
                 }
 
                 if (rl.isKeyPressed(.up) or rl.isGamepadButtonPressed(0, .left_face_up)) _ = game.tryRotate();
@@ -468,11 +491,13 @@ fn mainImpl() !void {
                         // Piece moved down successfully — no longer touching
                         game.touching = false;
                         game.lock_delay = 0;
+                        game.slide_count = 0;
                     } else {
                         // Can't move down — piece is touching something
                         if (!game.touching) {
                             game.touching = true;
                             game.lock_delay = 0;
+                            game.slide_count = 0;
                         }
                     }
                 }
@@ -485,6 +510,7 @@ fn mainImpl() !void {
                     if (game.tryMove(1, 0)) {
                         game.touching = false;
                         game.lock_delay = 0;
+                        game.slide_count = 0;
                         game.drop_timer = 0;
                     } else if (game.lock_delay >= LOCK_DELAY_TIME) {
                         // Grace period expired — lock the piece
