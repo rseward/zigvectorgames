@@ -11,6 +11,14 @@
 //
 // Game actions are abstracted behind an enum so the game logic never
 // needs to know whether input came from keyboard or gamepad.
+//
+// Multiple gamepads: each InputManager is bound to one gamepad slot
+// (`gamepad_index`, 0-based) for both the raylib-mapped path
+// (rl.isGamepadAvailable(gamepad_index), etc.) and the raw joydev
+// fallback (/dev/input/js<gamepad_index>). Local multiplayer games
+// create one InputManager per human player, each with its own
+// gamepad_index (0, 1, ...) so a second controller drives player two
+// without interfering with player one's.
 
 const std = @import("std");
 const rl = @import("raylib");
@@ -216,15 +224,12 @@ const RawJoystick = if (is_linux) struct {
 
 pub const KeyBinding = struct {
     key: rl.KeyboardKey,
-    /// If true, edge-triggered (isKeyPressed). If false, continuous (isKeyDown).
-    edge: bool = false,
 };
 
 pub const GamepadBinding = struct {
     button: ?rl.GamepadButton = null,
     trigger: ?rl.GamepadAxis = null,
     threshold: f32 = 0.1,
-    edge: bool = false,
 };
 
 pub const InputBindings = struct {
@@ -238,6 +243,9 @@ pub const InputBindings = struct {
 
 pub const InputManager = struct {
     bindings: *const InputBindings,
+    /// Which gamepad slot this manager reads from (raylib gamepad index
+    /// and /dev/input/js<gamepad_index> both use this same number).
+    gamepad_index: u8,
     raw_js: RawJoystick,
     raw_js_open: bool = false,
     use_raw: bool = false,
@@ -248,11 +256,16 @@ pub const InputManager = struct {
     prev_actions: []bool,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, bindings: *const InputBindings, action_count: usize) InputManager {
+    /// Create an InputManager bound to one gamepad slot. `gamepad_index`
+    /// selects which controller this instance reads (0 for player one,
+    /// 1 for player two, ...) — pass a distinct index per human player
+    /// so each gets an independent gamepad.
+    pub fn init(allocator: std.mem.Allocator, bindings: *const InputBindings, action_count: usize, gamepad_index: u8) InputManager {
         _ = rl.setGamepadMappings(GAMEPAD_MAPPINGS);
 
         var self = InputManager{
             .bindings = bindings,
+            .gamepad_index = gamepad_index,
             .raw_js = RawJoystick.init(),
             .action_count = action_count,
             .cur_actions = allocator.alloc(bool, action_count) catch unreachable,
@@ -264,13 +277,8 @@ pub const InputManager = struct {
 
         if (is_linux) {
             var js_buf: [32]u8 = undefined;
-            for (0..4) |i| {
-                const path = std.fmt.bufPrintZ(&js_buf, "/dev/input/js{d}", .{i}) catch break;
-                if (self.raw_js.open(path)) {
-                    self.raw_js_open = true;
-                    break;
-                }
-            }
+            const path = std.fmt.bufPrintZ(&js_buf, "/dev/input/js{d}", .{gamepad_index}) catch return self;
+            if (self.raw_js.open(path)) self.raw_js_open = true;
         }
 
         return self;
@@ -292,7 +300,7 @@ pub const InputManager = struct {
         }
 
         self.detectMode();
-        self.connected = if (self.use_raw) self.raw_js.active else rl.isGamepadAvailable(0);
+        self.connected = if (self.use_raw) self.raw_js.active else rl.isGamepadAvailable(self.gamepad_index);
 
         for (0..self.action_count) |i| {
             self.cur_actions[i] = self.checkGamepadAction(i);
@@ -310,23 +318,26 @@ pub const InputManager = struct {
             self.keyboardKeyPressed(action);
     }
 
-    /// Analog rotation amount: -1.0 (full left) to +1.0 (full right).
-    /// Keyboard returns -1, 0, or 1 (digital).
-    /// Gamepad left stick X returns analog value (with dead zone).
-    /// Gamepad D-pad left/right returns -1 or 1 (digital fallback).
-    pub fn rotationAmount(self: *const InputManager) f32 {
+    /// Analog axis value: -1.0 (neg_action full) to +1.0 (pos_action full).
+    /// Keyboard and digital gamepad bindings (from the bindings table) for
+    /// neg_action/pos_action return -1, 0, or 1. If a gamepad is connected
+    /// and its analog `stick` axis is pushed past the deadzone, the analog
+    /// value overrides the digital result.
+    ///
+    /// Use this for any two-directional analog control: asteroids-style
+    /// rotation (neg=rotate_left, pos=rotate_right, stick=.left_x) or a
+    /// pong-style paddle (neg=move_up, pos=move_down, stick=.left_y).
+    pub fn analogAxis(self: *const InputManager, neg_action: usize, pos_action: usize, stick: rl.GamepadAxis) f32 {
         var val: f32 = 0;
 
-        if (rl.isKeyDown(.left)) val -= 1.0;
-        if (rl.isKeyDown(.right)) val += 1.0;
+        if (self.isDown(neg_action)) val -= 1.0;
+        if (self.isDown(pos_action)) val += 1.0;
 
         if (self.connected) {
-            const lx = self.gamepadAxis(.left_x);
-            if (@abs(lx) > STICK_DEADZONE) {
-                val = lx;
+            const s = self.gamepadAxis(stick);
+            if (@abs(s) > STICK_DEADZONE) {
+                val = s;
             }
-            if (self.gamepadButtonDown(.left_face_left)) val -= 1.0;
-            if (self.gamepadButtonDown(.right_face_right)) val += 1.0;
         }
 
         return @max(-1.0, @min(1.0, val));
@@ -339,7 +350,7 @@ pub const InputManager = struct {
     pub fn gamepadName(self: *const InputManager) [:0]const u8 {
         if (!self.connected) return "";
         if (self.use_raw) return self.raw_js.nameSlice();
-        return rl.getGamepadName(0);
+        return rl.getGamepadName(self.gamepad_index);
     }
 
     // ── Private: auto-detection ──
@@ -347,7 +358,7 @@ pub const InputManager = struct {
     fn detectMode(self: *InputManager) void {
         if (self.detection_done) return;
 
-        if (is_linux and self.raw_js_open and rl.isGamepadAvailable(0)) {
+        if (is_linux and self.raw_js_open and rl.isGamepadAvailable(self.gamepad_index)) {
             var raw_has_input = false;
             for (0..@min(self.raw_js.button_count, 32)) |b| {
                 if (self.raw_js.buttons[b]) {
@@ -358,7 +369,7 @@ pub const InputManager = struct {
             var rl_has_input = false;
             for (1..18) |b| {
                 const btn: rl.GamepadButton = @enumFromInt(b);
-                if (rl.isGamepadButtonDown(0, btn)) {
+                if (rl.isGamepadButtonDown(self.gamepad_index, btn)) {
                     rl_has_input = true;
                     break;
                 }
@@ -372,7 +383,7 @@ pub const InputManager = struct {
             }
         }
 
-        if (is_linux and self.raw_js_open and !rl.isGamepadAvailable(0)) {
+        if (is_linux and self.raw_js_open and !rl.isGamepadAvailable(self.gamepad_index)) {
             self.use_raw = true;
             self.detection_done = true;
         }
@@ -397,7 +408,7 @@ pub const InputManager = struct {
             }
             return false;
         } else {
-            return rl.isGamepadButtonDown(0, btn);
+            return rl.isGamepadButtonDown(self.gamepad_index, btn);
         }
     }
 
@@ -414,7 +425,7 @@ pub const InputManager = struct {
                 .right_trigger => (self.raw_js.axes[5] + 1.0) / 2.0,
             };
         } else {
-            return rl.getGamepadAxisMovement(0, axis);
+            return rl.getGamepadAxisMovement(self.gamepad_index, axis);
         }
     }
 
@@ -434,19 +445,13 @@ pub const InputManager = struct {
 
     fn keyboardKeyDown(self: *const InputManager, action_idx: usize) bool {
         if (action_idx >= self.bindings.keyboard.len) return false;
-        const kb = self.bindings.keyboard[action_idx];
-        if (kb == null) return false;
-        const b = kb.?;
-        if (b.edge) return false;
-        return rl.isKeyDown(b.key);
+        const kb = self.bindings.keyboard[action_idx] orelse return false;
+        return rl.isKeyDown(kb.key);
     }
 
     fn keyboardKeyPressed(self: *const InputManager, action_idx: usize) bool {
         if (action_idx >= self.bindings.keyboard.len) return false;
-        const kb = self.bindings.keyboard[action_idx];
-        if (kb == null) return false;
-        const b = kb.?;
-        if (!b.edge) return false;
-        return rl.isKeyPressed(b.key);
+        const kb = self.bindings.keyboard[action_idx] orelse return false;
+        return rl.isKeyPressed(kb.key);
     }
 };

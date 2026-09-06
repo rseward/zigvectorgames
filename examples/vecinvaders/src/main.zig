@@ -29,11 +29,37 @@
 //   - Alien laser:  pitch-increasing square wave sweep
 //   - Explosion:    filtered noise burst with exponential decay
 //   - March clicks: 4 ascending tones that cycle on each alien step
+//
+// Xbox gamepad: left stick or D-pad to move, A to shoot, Back to pause.
+// Read through a single vgame.InputManager (gamepad_index 0), which
+// falls back to raw /dev/input/js0 polling when raylib's GLFW/SDL
+// mapping doesn't recognize the controller.
 
 const std = @import("std");
 const vgame = @import("vgame");
 const rl = vgame.rl;
 const Vector2 = vgame.Vector2;
+
+// Actions bound to both keyboard and gamepad 0 — see BINDINGS below.
+const Action = enum { move_left, move_right, shoot, pause, restart };
+const action_count = @typeInfo(Action).@"enum".fields.len;
+
+const BINDINGS = vgame.InputBindings{
+    .keyboard = &.{
+        .{ .key = .left },
+        .{ .key = .right },
+        .{ .key = .space },
+        .{ .key = .p },
+        .{ .key = .r },
+    },
+    .gamepad = &.{
+        .{ .button = .left_face_left },
+        .{ .button = .left_face_right },
+        .{ .button = .right_face_down },
+        .{ .button = .middle_left },
+        .{ .button = .right_face_down },
+    },
+};
 
 const Alien = struct {
     pos: Vector2,
@@ -253,6 +279,9 @@ fn mainImpl() !void {
     });
     defer app.deinit();
 
+    var input = vgame.InputManager.init(allocator, &BINDINGS, action_count, 0);
+    defer input.deinit();
+
     // Audio — sound clips loaded by index:
     //   0: explosion     1: player_laser    2: alien_laser
     //   3: march1 (low)  4: march2          5: march3         6: march4 (high)
@@ -312,16 +341,18 @@ fn mainImpl() !void {
         const dt = app.delta;
         const fs = app.screen.size;
 
+        input.update();
+
         player.pos.y = fs.y - 60;
 
         if (!game_over and !paused) {
-            // Player movement
-            if (rl.isKeyDown(.left)) player.pos.x -= 500 * dt;
-            if (rl.isKeyDown(.right)) player.pos.x += 500 * dt;
+            // Player movement — keyboard/D-pad (digital) or left stick (analog)
+            const move_axis = input.analogAxis(@intFromEnum(Action.move_left), @intFromEnum(Action.move_right), .left_x);
+            player.pos.x += move_axis * 500 * dt;
             player.pos.x = @max(40, @min(fs.x - 40, player.pos.x));
 
             // Shoot — only one player bullet on screen at a time
-            if (rl.isKeyPressed(.space)) {
+            if (input.isPressed(@intFromEnum(Action.shoot))) {
                 var has_player_bullet = false;
                 for (bullets.items) |b| {
                     if (b.from_player and !b.remove) {
@@ -596,11 +627,11 @@ fn mainImpl() !void {
 
             particles.update(dt, fs);
 
-            if (rl.isKeyPressed(.p)) paused = true;
+            if (input.isPressed(@intFromEnum(Action.pause))) paused = true;
         } else if (paused) {
-            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) paused = false;
+            if (input.isPressed(@intFromEnum(Action.pause)) or input.isPressed(@intFromEnum(Action.shoot))) paused = false;
         } else if (game_over) {
-            if (rl.isKeyPressed(.r)) {
+            if (input.isPressed(@intFromEnum(Action.restart))) {
                 player = .{ .pos = .{ .x = fs.x / 2, .y = fs.y - 60 }, .lives = 3 };
                 score = 0;
                 wave = 1;
@@ -678,6 +709,13 @@ fn mainImpl() !void {
                 true,
                 vgame.Color.white,
             );
+        }
+
+        // Gamepad connection indicator
+        if (input.isGamepadConnected()) {
+            var gp_buf: [128:0]u8 = undefined;
+            const gp_str = std.fmt.bufPrintZ(&gp_buf, "Gamepad: {s}", .{input.gamepadName()}) catch "Gamepad connected";
+            ctx.drawText(gp_str, 10, @as(i32, @intFromFloat(fs.y)) - 30, 18, vgame.Color.gray);
         }
 
         // Overlays

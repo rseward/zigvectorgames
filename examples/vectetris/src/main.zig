@@ -13,10 +13,41 @@
 // raylib's built-in module loader). Music pauses with the game, stops
 // on game over, and restarts on new game. Press M to toggle music on/off
 // — the toggle remembers the playback position and resumes from there.
+//
+// Xbox gamepad: D-pad left/right to move, D-pad up to rotate, D-pad down
+// to soft drop, A to hard drop, Back to pause. Read through a single
+// vgame.InputManager (gamepad_index 0), which falls back to raw
+// /dev/input/js0 polling when raylib's GLFW/SDL mapping doesn't
+// recognize the controller.
 
 const std = @import("std");
 const vgame = @import("vgame");
 const rl = vgame.rl;
+
+// Actions bound to both keyboard and gamepad 0 — see BINDINGS below.
+const Action = enum { move_left, move_right, rotate, soft_drop, hard_drop, pause, restart };
+const action_count = @typeInfo(Action).@"enum".fields.len;
+
+const BINDINGS = vgame.InputBindings{
+    .keyboard = &.{
+        .{ .key = .left },
+        .{ .key = .right },
+        .{ .key = .up },
+        .{ .key = .down },
+        .{ .key = .space },
+        .{ .key = .p },
+        .{ .key = .r },
+    },
+    .gamepad = &.{
+        .{ .button = .left_face_left },
+        .{ .button = .left_face_right },
+        .{ .button = .left_face_up },
+        .{ .button = .left_face_down },
+        .{ .button = .right_face_down },
+        .{ .button = .middle_left },
+        .{ .button = .right_face_down },
+    },
+};
 
 const GRID_W: usize = 10;
 const GRID_H: usize = 20;
@@ -351,6 +382,9 @@ fn mainImpl() !void {
     });
     defer app.deinit();
 
+    var input = vgame.InputManager.init(allocator, &BINDINGS, action_count, 0);
+    defer input.deinit();
+
     // Audio — load the background music module
     rl.initAudioDevice();
     var music: ?rl.Music = null;
@@ -389,6 +423,8 @@ fn mainImpl() !void {
     while (app.frame()) {
         const dt = app.delta;
         const fs = app.screen.size;
+
+        input.update();
 
         // Update music stream every frame (required by raylib)
         if (music) |m| rl.updateMusicStream(m);
@@ -430,10 +466,10 @@ fn mainImpl() !void {
                 // slides reset the lock delay timer, giving the player
                 // time to nudge the piece into position.
                 var did_slide: bool = false;
-                const left_down = rl.isKeyDown(.left) or rl.isGamepadButtonDown(0, .left_face_left);
-                const right_down = rl.isKeyDown(.right) or rl.isGamepadButtonDown(0, .left_face_right);
-                const left_pressed = rl.isKeyPressed(.left) or rl.isGamepadButtonPressed(0, .left_face_left);
-                const right_pressed = rl.isKeyPressed(.right) or rl.isGamepadButtonPressed(0, .left_face_right);
+                const left_down = input.isDown(@intFromEnum(Action.move_left));
+                const right_down = input.isDown(@intFromEnum(Action.move_right));
+                const left_pressed = input.isPressed(@intFromEnum(Action.move_left));
+                const right_pressed = input.isPressed(@intFromEnum(Action.move_right));
 
                 // Determine active direction — new key press takes priority
                 if (left_pressed) {
@@ -492,11 +528,11 @@ fn mainImpl() !void {
                     // no more resets, piece will lock when timer expires.
                 }
 
-                if (rl.isKeyPressed(.up) or rl.isGamepadButtonPressed(0, .left_face_up)) _ = game.tryRotate();
-                if (rl.isKeyDown(.down) or rl.isGamepadButtonDown(0, .left_face_down)) {
+                if (input.isPressed(@intFromEnum(Action.rotate))) _ = game.tryRotate();
+                if (input.isDown(@intFromEnum(Action.soft_drop))) {
                     if (game.tryMove(1, 0)) game.drop_timer = 0;
                 }
-                if (rl.isKeyPressed(.space) or rl.isGamepadButtonPressed(0, .right_face_down)) {
+                if (input.isPressed(@intFromEnum(Action.hard_drop))) {
                     game.hardDrop(&rand);
                 }
 
@@ -538,16 +574,13 @@ fn mainImpl() !void {
                     }
                 }
 
-                if (rl.isKeyPressed(.p) or rl.isGamepadButtonPressed(0, .middle_left)) {
+                if (input.isPressed(@intFromEnum(Action.pause))) {
                     game.paused = true;
                     if (music) |m| rl.pauseMusicStream(m);
                 }
             }
         } else if (game.paused) {
-            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space) or
-                rl.isGamepadButtonPressed(0, .middle_left) or
-                rl.isGamepadButtonPressed(0, .right_face_down))
-            {
+            if (input.isPressed(@intFromEnum(Action.pause)) or input.isPressed(@intFromEnum(Action.hard_drop))) {
                 game.paused = false;
                 // Only resume music if it wasn't user-muted
                 if (music) |m| {
@@ -558,7 +591,7 @@ fn mainImpl() !void {
             if (music) |m| {
                 if (rl.isMusicStreamPlaying(m)) rl.stopMusicStream(m);
             }
-            if (rl.isKeyPressed(.r) or rl.isGamepadButtonPressed(0, .right_face_down)) {
+            if (input.isPressed(@intFromEnum(Action.restart))) {
                 game = Game.init(&rand);
                 // Restart music from beginning (unless user-muted)
                 if (music) |m| {
@@ -694,12 +727,19 @@ fn mainImpl() !void {
         const ctrl_x = grid_x - 200;
         if (ctrl_x > 10) {
             ctx.drawText("CONTROLS", @as(i32, @intFromFloat(ctrl_x)), 100, 24, vgame.Color.white);
-            ctx.drawText("L/R  Move (hold to repeat)", @as(i32, @intFromFloat(ctrl_x)), 140, 20, vgame.Color.gray);
+            ctx.drawText("L/R  Move", @as(i32, @intFromFloat(ctrl_x)), 140, 20, vgame.Color.gray);
             ctx.drawText("UP   Rotate", @as(i32, @intFromFloat(ctrl_x)), 165, 20, vgame.Color.gray);
             ctx.drawText("DOWN Soft Drop", @as(i32, @intFromFloat(ctrl_x)), 190, 20, vgame.Color.gray);
             ctx.drawText("SPACE Hard Drop", @as(i32, @intFromFloat(ctrl_x)), 215, 20, vgame.Color.gray);
             ctx.drawText("P    Pause", @as(i32, @intFromFloat(ctrl_x)), 240, 20, vgame.Color.gray);
             ctx.drawText("M    Music on/off", @as(i32, @intFromFloat(ctrl_x)), 265, 20, vgame.Color.gray);
+        }
+
+        // Gamepad connection indicator
+        if (input.isGamepadConnected()) {
+            var gp_buf: [128:0]u8 = undefined;
+            const gp_str = std.fmt.bufPrintZ(&gp_buf, "Gamepad: {s}", .{input.gamepadName()}) catch "Gamepad connected";
+            ctx.drawText(gp_str, 10, @as(i32, @intFromFloat(fs.y)) - 30, 18, vgame.Color.gray);
         }
 
         // Overlays

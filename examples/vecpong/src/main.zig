@@ -11,6 +11,13 @@
 //   Keyboard: W/S
 //   Gamepad 1: Left stick Y / D-pad up-down
 //
+// Each player's controller is read through its own vgame.InputManager
+// (gamepad_index 0 for player one, 1 for player two), which falls back to
+// raw /dev/input/js<N> polling whenever raylib's GLFW/SDL mapping doesn't
+// recognize the controller. Using that abstraction instead of raw
+// rl.isGamepadAvailable/getGamepadAxisMovement calls is what actually
+// makes an Xbox pad usable here — see input.zig for why.
+//
 // F toggles fullscreen (platform default).
 // P pauses and shows the help screen.
 // R restarts after a game ends. 1/2 selects mode at title screen.
@@ -19,6 +26,33 @@ const std = @import("std");
 const vgame = @import("vgame");
 const rl = vgame.rl;
 const Vector2 = vgame.Vector2;
+
+// Per-player paddle actions, bound to that player's own keyboard keys and
+// its own gamepad (each player gets its own InputManager below).
+const PaddleAction = enum { up, down };
+const paddle_action_count = @typeInfo(PaddleAction).@"enum".fields.len;
+
+const P1_BINDINGS = vgame.InputBindings{
+    .keyboard = &.{
+        .{ .key = .up },
+        .{ .key = .down },
+    },
+    .gamepad = &.{
+        .{ .button = .left_face_up },
+        .{ .button = .left_face_down },
+    },
+};
+
+const P2_BINDINGS = vgame.InputBindings{
+    .keyboard = &.{
+        .{ .key = .w },
+        .{ .key = .s },
+    },
+    .gamepad = &.{
+        .{ .button = .left_face_up },
+        .{ .button = .left_face_down },
+    },
+};
 
 const Paddle = struct {
     pos: Vector2,
@@ -65,6 +99,11 @@ fn mainImpl() !void {
     });
     defer app.deinit();
 
+    var p1_input = vgame.InputManager.init(allocator, &P1_BINDINGS, paddle_action_count, 0);
+    defer p1_input.deinit();
+    var p2_input = vgame.InputManager.init(allocator, &P2_BINDINGS, paddle_action_count, 1);
+    defer p2_input.deinit();
+
     var p1: Paddle = .{ .pos = .{ .x = 60, .y = 480 } };
     var p2: Paddle = .{ .pos = .{ .x = 1220, .y = 480 } };
     var ball: Ball = .{
@@ -86,6 +125,9 @@ fn mainImpl() !void {
     while (app.frame()) {
         const dt = app.delta;
         const fs = app.screen.size;
+
+        p1_input.update();
+        p2_input.update();
 
         // ── Title screen ──────────────────────────────────────────
         if (game_state == .title) {
@@ -109,29 +151,14 @@ fn mainImpl() !void {
             }
 
             // ── Player 1 input (keyboard: Up/Down + gamepad 0) ──
-            if (rl.isKeyDown(.up)) p1.pos.y -= p1.speed * dt;
-            if (rl.isKeyDown(.down)) p1.pos.y += p1.speed * dt;
-            // Gamepad 0: left stick Y (inverted) + d-pad
-            if (rl.isGamepadAvailable(0)) {
-                const ly = rl.getGamepadAxisMovement(0, .left_y);
-                if (@abs(ly) > 0.15) p1.pos.y += ly * p1.speed * dt;
-                if (rl.isGamepadButtonDown(0, .left_face_up)) p1.pos.y -= p1.speed * dt;
-                if (rl.isGamepadButtonDown(0, .left_face_down)) p1.pos.y += p1.speed * dt;
-            }
+            const p1_axis = p1_input.analogAxis(@intFromEnum(PaddleAction.up), @intFromEnum(PaddleAction.down), .left_y);
+            p1.pos.y += p1_axis * p1.speed * dt;
             p1.pos.y = @max(p1.height / 2, @min(fs.y - p1.height / 2, p1.pos.y));
 
             // ── Player 2 input ──
             if (mode == .two_player) {
-                // Keyboard: W/S
-                if (rl.isKeyDown(.w)) p2.pos.y -= p2.speed * dt;
-                if (rl.isKeyDown(.s)) p2.pos.y += p2.speed * dt;
-                // Gamepad 1: left stick Y + d-pad
-                if (rl.isGamepadAvailable(1)) {
-                    const ly2 = rl.getGamepadAxisMovement(1, .left_y);
-                    if (@abs(ly2) > 0.15) p2.pos.y += ly2 * p2.speed * dt;
-                    if (rl.isGamepadButtonDown(1, .left_face_up)) p2.pos.y -= p2.speed * dt;
-                    if (rl.isGamepadButtonDown(1, .left_face_down)) p2.pos.y += p2.speed * dt;
-                }
+                const p2_axis = p2_input.analogAxis(@intFromEnum(PaddleAction.up), @intFromEnum(PaddleAction.down), .left_y);
+                p2.pos.y += p2_axis * p2.speed * dt;
                 p2.pos.y = @max(p2.height / 2, @min(fs.y - p2.height / 2, p2.pos.y));
             } else {
                 // ── AI opponent ──
@@ -304,13 +331,13 @@ fn mainImpl() !void {
         // Gamepad connection indicators
         {
             var gp_buf: [128:0]u8 = undefined;
-            if (rl.isGamepadAvailable(0)) {
-                const name = rl.getGamepadName(0);
+            if (p1_input.isGamepadConnected()) {
+                const name = p1_input.gamepadName();
                 const gp_str = std.fmt.bufPrintZ(&gp_buf, "P1: {s}", .{name}) catch "P1: Gamepad";
                 ctx.drawText(gp_str, 10, @as(i32, @intFromFloat(fs.y)) - 30, 18, vgame.Color.gray);
             }
-            if (rl.isGamepadAvailable(1)) {
-                const name = rl.getGamepadName(1);
+            if (p2_input.isGamepadConnected()) {
+                const name = p2_input.gamepadName();
                 const gp_str = std.fmt.bufPrintZ(&gp_buf, "P2: {s}", .{name}) catch "P2: Gamepad";
                 const w = rl.measureText(gp_str, 18);
                 ctx.drawText(gp_str, @as(i32, @intFromFloat(fs.x)) - w - 10, @as(i32, @intFromFloat(fs.y)) - 30, 18, vgame.Color.gray);
