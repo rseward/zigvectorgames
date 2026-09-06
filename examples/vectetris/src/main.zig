@@ -292,6 +292,13 @@ fn mainImpl() !void {
     var music_muted: bool = false;
     var music_resume_pos: f32 = 0.0;
 
+    // Horizontal auto-repeat (DAS — Delayed Auto Shift)
+    // Initial delay before repeating, then interval between repeats.
+    const DAS_DELAY: f32 = 0.17;
+    const DAS_REPEAT: f32 = 0.05;
+    var das_timer: f32 = 0;
+    var das_dir: i32 = 0; // -1 = left, +1 = right, 0 = none
+
     var prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
     var rand = prng.random();
 
@@ -337,13 +344,67 @@ fn mainImpl() !void {
                 }
             } else {
                 // Input — player can always move/rotate, even while touching
-                if (rl.isKeyPressed(.left)) _ = game.tryMove(0, -1);
-                if (rl.isKeyPressed(.right)) _ = game.tryMove(0, 1);
-                if (rl.isKeyPressed(.up)) _ = game.tryRotate();
-                if (rl.isKeyDown(.down)) {
+
+                // Horizontal movement with DAS auto-repeat.
+                // Pressing left/right moves once immediately. Holding past
+                // DAS_DELAY triggers repeating at DAS_REPEAT interval.
+                // Supports both keyboard arrows and Xbox D-pad.
+                const left_down = rl.isKeyDown(.left) or rl.isGamepadButtonDown(0, .left_face_left);
+                const right_down = rl.isKeyDown(.right) or rl.isGamepadButtonDown(0, .left_face_right);
+                const left_pressed = rl.isKeyPressed(.left) or rl.isGamepadButtonPressed(0, .left_face_left);
+                const right_pressed = rl.isKeyPressed(.right) or rl.isGamepadButtonPressed(0, .left_face_right);
+
+                // Determine active direction — new key press takes priority
+                if (left_pressed) {
+                    das_dir = -1;
+                    das_timer = 0;
+                    _ = game.tryMove(0, -1);
+                } else if (right_pressed) {
+                    das_dir = 1;
+                    das_timer = 0;
+                    _ = game.tryMove(0, 1);
+                } else if (left_down and das_dir == -1) {
+                    // Holding left — advance DAS timer
+                    das_timer += dt;
+                    if (das_timer >= DAS_DELAY) {
+                        // After initial delay, repeat at faster interval
+                        const repeat_timer = das_timer - DAS_DELAY;
+                        if (repeat_timer >= DAS_REPEAT) {
+                            das_timer = DAS_DELAY; // reset to delay threshold
+                            _ = game.tryMove(0, -1);
+                        }
+                    }
+                } else if (right_down and das_dir == 1) {
+                    // Holding right — advance DAS timer
+                    das_timer += dt;
+                    if (das_timer >= DAS_DELAY) {
+                        const repeat_timer = das_timer - DAS_DELAY;
+                        if (repeat_timer >= DAS_REPEAT) {
+                            das_timer = DAS_DELAY;
+                            _ = game.tryMove(0, 1);
+                        }
+                    }
+                } else if (!left_down and !right_down) {
+                    // Both released — reset DAS
+                    das_dir = 0;
+                    das_timer = 0;
+                } else if (left_down and das_dir != -1) {
+                    // Switched from right to left
+                    das_dir = -1;
+                    das_timer = 0;
+                    _ = game.tryMove(0, -1);
+                } else if (right_down and das_dir != 1) {
+                    // Switched from left to right
+                    das_dir = 1;
+                    das_timer = 0;
+                    _ = game.tryMove(0, 1);
+                }
+
+                if (rl.isKeyPressed(.up) or rl.isGamepadButtonPressed(0, .left_face_up)) _ = game.tryRotate();
+                if (rl.isKeyDown(.down) or rl.isGamepadButtonDown(0, .left_face_down)) {
                     if (game.tryMove(1, 0)) game.drop_timer = 0;
                 }
-                if (rl.isKeyPressed(.space)) {
+                if (rl.isKeyPressed(.space) or rl.isGamepadButtonPressed(0, .right_face_down)) {
                     game.hardDrop(&rand);
                 }
 
@@ -379,13 +440,16 @@ fn mainImpl() !void {
                     }
                 }
 
-                if (rl.isKeyPressed(.p)) {
+                if (rl.isKeyPressed(.p) or rl.isGamepadButtonPressed(0, .middle_left)) {
                     game.paused = true;
                     if (music) |m| rl.pauseMusicStream(m);
                 }
             }
         } else if (game.paused) {
-            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) {
+            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space) or
+                rl.isGamepadButtonPressed(0, .middle_left) or
+                rl.isGamepadButtonPressed(0, .right_face_down))
+            {
                 game.paused = false;
                 // Only resume music if it wasn't user-muted
                 if (music) |m| {
@@ -396,7 +460,7 @@ fn mainImpl() !void {
             if (music) |m| {
                 if (rl.isMusicStreamPlaying(m)) rl.stopMusicStream(m);
             }
-            if (rl.isKeyPressed(.r)) {
+            if (rl.isKeyPressed(.r) or rl.isGamepadButtonPressed(0, .right_face_down)) {
                 game = Game.init(&rand);
                 // Restart music from beginning (unless user-muted)
                 if (music) |m| {
@@ -529,7 +593,7 @@ fn mainImpl() !void {
         const ctrl_x = grid_x - 200;
         if (ctrl_x > 10) {
             ctx.drawText("CONTROLS", @as(i32, @intFromFloat(ctrl_x)), 100, 24, vgame.Color.white);
-            ctx.drawText("L/R  Move", @as(i32, @intFromFloat(ctrl_x)), 140, 20, vgame.Color.gray);
+            ctx.drawText("L/R  Move (hold to repeat)", @as(i32, @intFromFloat(ctrl_x)), 140, 20, vgame.Color.gray);
             ctx.drawText("UP   Rotate", @as(i32, @intFromFloat(ctrl_x)), 165, 20, vgame.Color.gray);
             ctx.drawText("DOWN Soft Drop", @as(i32, @intFromFloat(ctrl_x)), 190, 20, vgame.Color.gray);
             ctx.drawText("SPACE Hard Drop", @as(i32, @intFromFloat(ctrl_x)), 215, 20, vgame.Color.gray);
