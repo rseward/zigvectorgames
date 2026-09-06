@@ -58,7 +58,7 @@ pub const Particles = struct {
                 }),
                 .vel = rlm.vector2Scale(
                     .{ .x = math.cos(angle), .y = math.sin(angle) },
-                    config.speed * 60.0 * rand.float(f32),
+                    (config.speed * 60.0 + 200.0) * rand.float(f32),
                 ),
                 .ttl = config.ttl + rand.float(f32),
                 .color = config.color,
@@ -82,7 +82,7 @@ pub const Particles = struct {
                 }),
                 .vel = rlm.vector2Scale(
                     .{ .x = math.cos(angle), .y = math.sin(angle) },
-                    (config.speed + 4.0 * rand.float(f32)) * 60.0,
+                    (config.speed + 4.0 * rand.float(f32)) * 60.0 + 300.0 * rand.float(f32),
                 ),
                 .ttl = 0.5 + 0.4 * rand.float(f32),
                 .color = config.color,
