@@ -4,6 +4,10 @@
 // P: pause. R: restart after game over.
 // 7 tetromino types (I, O, T, S, Z, L, J), each with a distinct color.
 // Standard scoring: 1 line=100, 2=300, 3=500, 4=800. Level up every 10 lines.
+//
+// Background music: resources/tetris.xm (XM module format, played via
+// raylib's built-in module loader). Music pauses with the game, stops
+// on game over, and restarts on new game.
 
 const std = @import("std");
 const vgame = @import("vgame");
@@ -270,6 +274,19 @@ fn mainImpl() !void {
     });
     defer app.deinit();
 
+    // Audio — load the background music module
+    rl.initAudioDevice();
+    var music: ?rl.Music = null;
+    music = rl.loadMusicStream("resources/tetris.xm") catch |err| blk: {
+        std.log.warn("Failed to load tetris.xm (game will be silent): {}", .{err});
+        break :blk null;
+    };
+    defer if (music) |*m| rl.unloadMusicStream(m.*);
+    if (music) |*m| {
+        rl.setMusicVolume(m.*, 0.5);
+        rl.playMusicStream(m.*);
+    }
+
     var prng = std.Random.Xoshiro256.init(@bitCast(std.time.timestamp()));
     var rand = prng.random();
 
@@ -284,6 +301,9 @@ fn mainImpl() !void {
     while (app.frame()) {
         const dt = app.delta;
         const fs = app.screen.size;
+
+        // Update music stream every frame (required by raylib)
+        if (music) |m| rl.updateMusicStream(m);
 
         if (!game.game_over and !game.paused) {
             if (game.state == .dissolving) {
@@ -337,13 +357,23 @@ fn mainImpl() !void {
                     }
                 }
 
-                if (rl.isKeyPressed(.p)) game.paused = true;
+                if (rl.isKeyPressed(.p)) {
+                    game.paused = true;
+                    if (music) |m| rl.pauseMusicStream(m);
+                }
             }
         } else if (game.paused) {
-            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) game.paused = false;
+            if (rl.isKeyPressed(.p) or rl.isKeyPressed(.space)) {
+                game.paused = false;
+                if (music) |m| rl.resumeMusicStream(m);
+            }
         } else if (game.game_over) {
+            if (music) |m| {
+                if (rl.isMusicStreamPlaying(m)) rl.stopMusicStream(m);
+            }
             if (rl.isKeyPressed(.r)) {
                 game = Game.init(&rand);
+                if (music) |m| rl.playMusicStream(m);
             }
         }
 
