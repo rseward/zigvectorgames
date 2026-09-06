@@ -196,7 +196,7 @@ const Game = struct {
         return false;
     }
 
-    fn lockPiece(self: *Game, rand: *std.Random) void {
+    fn lockPiece(self: *Game) void {
         const cells = getCells(self.piece);
         const color = PIECE_COLORS[@intFromEnum(self.piece.type)];
         for (cells) |cell| {
@@ -206,6 +206,7 @@ const Game = struct {
                 self.grid[@intCast(r)][@intCast(c)] = color;
             }
         }
+        // Detect completed rows
         var count: usize = 0;
         for (0..GRID_H) |row| {
             var full = true;
@@ -219,13 +220,22 @@ const Game = struct {
         }
         self.dissolve_count = count;
         if (count > 0) {
+            // Enter dissolve state — new piece spawns after dissolve finishes
             self.state = .dissolving;
             self.dissolve_timer = 0;
+        } else {
+            // No lines cleared — spawn next piece immediately
+            // (handled by caller via spawnNextAfterLock)
         }
+    }
+
+    /// Called after lockPiece when no lines were cleared, OR after
+    /// finishClearLines when the dissolve animation is done.
+    fn spawnNextAfterLock(self: *Game, rand: *std.Random) void {
         self.spawnNew(rand);
     }
 
-    fn finishClearLines(self: *Game) void {
+    fn finishClearLines(self: *Game, rand: *std.Random) void {
         const cleared = self.dissolve_count;
         const rows: [4]usize = self.dissolve_rows;
         // Process bottom-up so shifts don't interfere
@@ -247,11 +257,17 @@ const Game = struct {
             self.level = 1 + self.lines / 10;
             self.drop_interval = @max(0.1, 1.0 - @as(f32, @floatFromInt(self.level - 1)) * 0.1);
         }
+        // Now spawn the next piece — this happens after rows are cleared,
+        // so the new piece sees a clean grid
+        self.spawnNew(rand);
     }
 
     fn hardDrop(self: *Game, rand: *std.Random) void {
         while (self.tryMove(1, 0)) {}
-        self.lockPiece(rand);
+        self.lockPiece();
+        if (self.dissolve_count == 0) {
+            self.spawnNextAfterLock(rand);
+        }
     }
 };
 
@@ -340,7 +356,7 @@ fn mainImpl() !void {
                 game.dissolve_timer += dt;
                 if (game.dissolve_timer >= 0.5) {
                     game.dissolve_timer = 0;
-                    game.finishClearLines();
+                    game.finishClearLines(&rand);
                 }
             } else {
                 // Input — player can always move/rotate, even while touching
@@ -436,7 +452,10 @@ fn mainImpl() !void {
                         game.drop_timer = 0;
                     } else if (game.lock_delay >= LOCK_DELAY_TIME) {
                         // Grace period expired — lock the piece
-                        game.lockPiece(&rand);
+                        game.lockPiece();
+                        if (game.dissolve_count == 0) {
+                            game.spawnNextAfterLock(&rand);
+                        }
                     }
                 }
 
@@ -521,34 +540,37 @@ fn mainImpl() !void {
             }
         }
 
-        // Draw current piece (ghost + actual)
-        const cells = Game.getCells(game.piece);
-        const piece_color = PIECE_COLORS[@intFromEnum(game.piece.type)];
+        // Draw current piece (ghost + actual) — skip during dissolve
+        // because the piece is already locked into the grid
+        if (game.state != .dissolving and !game.game_over) {
+            const cells = Game.getCells(game.piece);
+            const piece_color = PIECE_COLORS[@intFromEnum(game.piece.type)];
 
-        // Ghost piece: show where it would land
-        var ghost_piece = game.piece;
-        while (blk: {
-            var p = ghost_piece;
-            p.row += 1;
-            if (game.isValidPos(p)) {
-                ghost_piece = p;
-                break :blk true;
+            // Ghost piece: show where it would land
+            var ghost_piece = game.piece;
+            while (blk: {
+                var p = ghost_piece;
+                p.row += 1;
+                if (game.isValidPos(p)) {
+                    ghost_piece = p;
+                    break :blk true;
+                }
+                break :blk false;
+            }) {}
+            const ghost_cells = Game.getCells(ghost_piece);
+            for (ghost_cells) |cell| {
+                if (cell[0] >= 0) {
+                    drawGhostCell(&ctx, grid_x + @as(f32, @floatFromInt(cell[1])) * CELL,
+                        grid_y + @as(f32, @floatFromInt(cell[0])) * CELL, piece_color);
+                }
             }
-            break :blk false;
-        }) {}
-        const ghost_cells = Game.getCells(ghost_piece);
-        for (ghost_cells) |cell| {
-            if (cell[0] >= 0) {
-                drawGhostCell(&ctx, grid_x + @as(f32, @floatFromInt(cell[1])) * CELL,
-                    grid_y + @as(f32, @floatFromInt(cell[0])) * CELL, piece_color);
-            }
-        }
 
-        // Actual piece
-        for (cells) |cell| {
-            if (cell[0] >= 0) {
-                drawCell(&ctx, grid_x + @as(f32, @floatFromInt(cell[1])) * CELL,
-                    grid_y + @as(f32, @floatFromInt(cell[0])) * CELL, piece_color);
+            // Actual piece
+            for (cells) |cell| {
+                if (cell[0] >= 0) {
+                    drawCell(&ctx, grid_x + @as(f32, @floatFromInt(cell[1])) * CELL,
+                        grid_y + @as(f32, @floatFromInt(cell[0])) * CELL, piece_color);
+                }
             }
         }
 
