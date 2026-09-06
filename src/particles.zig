@@ -47,6 +47,7 @@ pub const Particles = struct {
     }
 
     /// Spawn line debris particles (explosion fragments).
+    /// Velocities are in design-space units per second (dt-scaled).
     pub fn spawnLines(self: *Particles, pos: Vector2, count: usize, config: ParticleConfig, rand: *std.Random) !void {
         for (0..count) |_| {
             const angle = math.tau * rand.float(f32);
@@ -57,7 +58,7 @@ pub const Particles = struct {
                 }),
                 .vel = rlm.vector2Scale(
                     .{ .x = math.cos(angle), .y = math.sin(angle) },
-                    config.speed * rand.float(f32),
+                    config.speed * 60.0 * rand.float(f32),
                 ),
                 .ttl = config.ttl + rand.float(f32),
                 .color = config.color,
@@ -70,6 +71,7 @@ pub const Particles = struct {
     }
 
     /// Spawn dot particles (explosion sparks).
+    /// Velocities are in design-space units per second (dt-scaled).
     pub fn spawnDots(self: *Particles, pos: Vector2, count: usize, config: ParticleConfig, rand: *std.Random) !void {
         for (0..count) |_| {
             const angle = math.tau * rand.float(f32);
@@ -80,7 +82,7 @@ pub const Particles = struct {
                 }),
                 .vel = rlm.vector2Scale(
                     .{ .x = math.cos(angle), .y = math.sin(angle) },
-                    config.speed + 4.0 * rand.float(f32),
+                    (config.speed + 4.0 * rand.float(f32)) * 60.0,
                 ),
                 .ttl = 0.5 + 0.4 * rand.float(f32),
                 .color = config.color,
