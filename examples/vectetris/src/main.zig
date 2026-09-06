@@ -119,25 +119,61 @@ const Game = struct {
     dissolve_timer: f32 = 0,
     dissolve_rows: [4]usize = .{ 0, 0, 0, 0 },
     dissolve_count: usize = 0,
+    // 7-bag randomizer: each bag contains all 7 piece types in random
+    // order. Deal from the bag; when empty, refill and shuffle.
+    bag: [PIECE_COUNT]PieceType = undefined,
+    bag_pos: usize = PIECE_COUNT, // start empty so first init refills
 
     fn init(rand: *std.Random) Game {
-        const t: PieceType = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
         var g = Game{
             .grid = @splat(@splat(null)),
-            .piece = .{ .type = t, .row = 0, .col = 3 },
-            .next = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT)),
+            .piece = .{ .type = .I, .row = 0, .col = 3 },
+            .next = .I,
         };
+        g.refillBag(rand);
+        g.piece = .{ .type = g.bag[g.bag_pos], .row = 0, .col = 3, .rotation = 0 };
+        g.bag_pos += 1;
+        g.next = g.bag[g.bag_pos];
+        g.bag_pos += 1;
         if (!g.isValidPos(g.piece)) {
             g.game_over = true;
         }
         return g;
     }
 
+    /// Shuffle the bag with all 7 piece types using Fisher-Yates.
+    fn refillBag(self: *Game, rand: *std.Random) void {
+        // Fill with all piece types in enum order
+        for (0..PIECE_COUNT) |i| {
+            self.bag[i] = @enumFromInt(i);
+        }
+        // Fisher-Yates shuffle
+        var i: usize = PIECE_COUNT;
+        while (i > 1) {
+            i -= 1;
+            const j = rand.intRangeLessThan(usize, 0, i + 1);
+            const tmp = self.bag[i];
+            self.bag[i] = self.bag[j];
+            self.bag[j] = tmp;
+        }
+        self.bag_pos = 0;
+    }
+
+    /// Draw the next piece type from the bag, refilling if empty.
+    fn drawFromBag(self: *Game, rand: *std.Random) PieceType {
+        if (self.bag_pos >= PIECE_COUNT) {
+            self.refillBag(rand);
+        }
+        const pt = self.bag[self.bag_pos];
+        self.bag_pos += 1;
+        return pt;
+    }
+
     fn spawnNew(self: *Game, rand: *std.Random) void {
         // The previewed 'next' piece becomes the active piece
         self.piece = .{ .type = self.next, .row = 0, .col = 3, .rotation = 0 };
-        // Roll a new 'next' piece for the preview
-        self.next = @enumFromInt(rand.intRangeLessThan(usize, 0, PIECE_COUNT));
+        // Draw a new 'next' piece from the 7-bag
+        self.next = self.drawFromBag(rand);
         self.touching = false;
         self.lock_delay = 0;
         if (!self.isValidPos(self.piece)) {
